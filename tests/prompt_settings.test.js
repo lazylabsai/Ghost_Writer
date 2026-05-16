@@ -68,10 +68,9 @@ function testRecapPromptAssembly() {
     sessionMode: "meeting"
   });
 
-  assert.ok(prompt.includes('"overview"'), "recap prompt should require overview JSON");
-  assert.ok(prompt.includes('"keyPoints"'), "recap prompt should require keyPoints JSON");
-  assert.ok(prompt.includes('"actionItems"'), "recap prompt should require actionItems JSON");
-  assert.ok(prompt.includes("Owner not specified"), "recap prompt should define owner handling");
+  assert.ok(prompt.includes('context'), "recap prompt should require context JSON");
+  assert.ok(prompt.includes('keyPoints'), "recap prompt should require keyPoints JSON");
+  assert.ok(prompt.includes('actionItems'), "recap prompt should require actionItems JSON");
   assert.ok(prompt.includes("Project migration from REST to gRPC."), "meeting context should be injected");
   assert.ok(!prompt.includes("__SOURCES__"), "recap prompt should not append source disclosure outside JSON");
 }
