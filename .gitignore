@@ -192,7 +192,6 @@ worker-script/
 transcript_data.json
 transcript_utf8.json
 *.traineddata
-test_*.js
 !tests/test_audio_echo_suppression.js
 test_*.wav
 audit_report.md
