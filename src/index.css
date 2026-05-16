@@ -1,0 +1,281 @@
+@font-face {
+  font-family: 'CelebMF';
+  src: url('./font/Masterfont - Celeb MF Medium.otf') format('opentype');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'CelebMFLight';
+  src: url('./font/Masterfont - Celeb MF Light.otf') format('opentype');
+  font-weight: 300;
+  font-style: normal;
+  font-display: swap;
+}
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* System Fonts - SF Pro */
+  --font-system: "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Segoe UI Emoji", "Segoe UI Symbol";
+
+  /* --- SEMANTIC TOKEN SYSTEM (DEFAULT: DARK) --- */
+  /* Reference Image Matching - Deep Navy Theme */
+  --bg-sidebar: #050508;
+  --bg-main: #0a0a0f;
+  --bg-card: #12121a;
+
+  --bg-toggle-switch: #1c1c24;
+  --bg-item-surface: #16161f;
+  --bg-item-active: #1e1e2b;
+
+  --bg-primary: #020205;
+  --bg-secondary: #050508;
+  --bg-elevated: #0f0f15;
+  --bg-input: #08080c;
+
+  --text-primary: #ffffff;
+  --text-secondary: #cbd5e1;
+  --text-tertiary: #94a3b8;
+
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border-muted: rgba(255, 255, 255, 0.15);
+
+  --accent-primary: #38bdf8;
+  --accent-muted: rgba(56, 189, 248, 0.1);
+
+  --bg-component: #111118;
+  --overlay-bg: rgba(5, 5, 8, 0.85);
+
+  /* Glass / Acrylic System */
+  --bg-glass: rgba(15, 15, 20, 0.7);
+  --border-glass: rgba(255, 255, 255, 0.15);
+  --bg-surface-frosted: rgba(255, 255, 255, 0.05);
+  --shadow-premium: 0 24px 48px -12px rgba(0, 0, 0, 0.5);
+  --bg-card-alpha: rgba(20, 20, 25, 0.4);
+
+  /* Neural Awakening Redesign Tokens */
+  --neural-bg-aurora-1: rgba(56, 189, 248, 0.15);
+  --neural-bg-aurora-2: rgba(139, 92, 246, 0.1);
+  --neural-glass-bg: rgba(10, 10, 15, 0.4);
+  --neural-glass-border: rgba(255, 255, 255, 0.08);
+}
+
+[data-theme='light'] {
+  /* Canvas = Soft Matte | Cards = Frosted Porcelain */
+  --bg-primary: #F5F5F7;
+  --bg-secondary: #EBEBF0;
+  --bg-elevated: #FFFFFF;
+  --bg-input: #FFFFFF;
+
+  /* Reference Image Mappings (Light) */
+  --bg-sidebar: rgba(245, 245, 247, 0.8);
+  --bg-main: #F5F5F7;
+  --bg-card: #FFFFFF;
+  --bg-item-active: rgba(0, 0, 0, 0.06);
+
+  --bg-toggle-switch: #E4E4E7;
+  --bg-item-surface: rgba(0, 0, 0, 0.04);
+
+  /* Text = Graphite Ink */
+  --text-primary: #000000;
+  --text-secondary: #111111;
+  --text-tertiary: #3A3A3C;
+
+  /* Borders = Clean & Precise */
+  --border-subtle: rgba(0, 0, 0, 0.06);
+  --border-muted: rgba(0, 0, 0, 0.12);
+
+  /* Accent = Calm & Confident */
+  --accent-primary: #0066CC;
+  --accent-muted: rgba(0, 102, 204, 0.1);
+
+  --bg-component: #FFFFFF;
+
+  --overlay-bg: rgba(255, 255, 255, 0.8);
+
+  /* Glass / Acrylic System (Light) - White Frosted Glass on Soft Gray */
+  --bg-glass: rgba(255, 255, 255, 0.65);
+  --border-glass: rgba(0, 0, 0, 0.06);
+  --bg-sidebar-alpha: rgba(245, 245, 247, 0.7);
+  --bg-overlay: rgba(255, 255, 255, 0.4);
+  --shadow-premium: 0 10px 30px -10px rgba(0, 0, 0, 0.05);
+  --bg-card-alpha: rgba(255, 255, 255, 0.75);
+
+  .force-black-icon {
+    filter: brightness(0) !important;
+  }
+}
+
+/* App sizing baseline (required for h-full / flex scroll areas) */
+html,
+body,
+#root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  /* Transparent background to let vibrancy show through */
+  background: transparent !important;
+  /* System font */
+  font-family: var(--font-system);
+  /* Smoother fonts */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Allow selection in specific areas if needed */
+.selectable {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+body {
+  margin: 0;
+  /* cursor: default; -> Removed to let app dictate cursor */
+}
+
+/* Scrollbar Styling - Minimal hidden style by default */
+::-webkit-scrollbar {
+  width: 0px;
+  background: transparent;
+}
+
+/* Custom Visible Scrollbar for specific containers */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+  border-radius: 10px;
+}
+
+.custom-scrollbar:hover::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 10px;
+  border: 3px solid transparent; /* Acts as padding to make the thumb look slimmer but the hit area larger */
+  background-clip: padding-box;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+  background-clip: padding-box;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:active {
+  background: rgba(255, 255, 255, 0.5);
+  background-clip: padding-box;
+}
+
+/* Liquid Glass Effect Base - Refined Matte Look */
+/* Used for floating elements on top of the vibrant background */
+.liquid-glass {
+  background: var(--bg-glass);
+  /* Restored original opacity */
+  backdrop-filter: blur(24px) saturate(140%);
+  -webkit-backdrop-filter: blur(24px) saturate(140%);
+  border: 1px solid var(--border-glass);
+  border-radius: 1.25rem;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  position: relative;
+  overflow: hidden;
+}
+
+/* Interaction Utilities - Reusable */
+.interaction-base {
+  transition-property: transform, opacity, background-color, border-color, color;
+  transition-duration: 200ms;
+  transition-timing-function: cubic-bezier(0.25, 1, 0.5, 1);
+  backface-visibility: hidden;
+}
+
+.interaction-hover:hover {
+  transform: translateY(-0.5px);
+}
+
+.interaction-press:active {
+  transform: scale(0.97);
+  opacity: 0.9;
+}
+
+/* Electron Stability - Drag Regions */
+/* Title bar area usually */
+.titlebar-drag-region {
+  -webkit-app-region: drag;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 38px;
+  /* Standard titlebar height */
+  z-index: 9999;
+  cursor: default;
+}
+
+.draggable-area {
+  -webkit-app-region: drag;
+  position: relative;
+  z-index: 50;
+  cursor: default;
+}
+
+.drag-region {
+  -webkit-app-region: drag;
+}
+
+/* Make sure buttons and interactive elements are not draggable */
+button,
+input,
+select,
+textarea,
+.interactive,
+.no-drag,
+[role="button"],
+a {
+  -webkit-app-region: no-drag;
+  cursor: default;
+}
+
+/* Override cursor for clickable items */
+button:hover,
+[role="button"]:hover,
+a:hover,
+.cursor-pointer {
+  cursor: pointer;
+}
+
+/* Utilities for sidebar layout */
+.app-sidebar {
+  background: var(--bg-sidebar-alpha);
+  /* Darker sidebar */
+  backdrop-filter: blur(10px);
+  /* Minor local blur */
+  border-right: 1px solid var(--border-glass);
+}
+
+.app-content {
+  background: transparent;
+  /* Let vibrancy show */
+}
+
+@keyframes shine {
+  0% {
+    transform: translateX(-100%) skewX(-12deg);
+  }
+
+  100% {
+    transform: translateX(200%) skewX(-12deg);
+  }
+}
+
+.animate-shine {
+  animation: shine 2s infinite;
+}

@@ -1,0 +1,220 @@
+{
+  "name": "ghost-writer",
+  "version": "1.0.0",
+  "main": "./dist-electron/electron/main.js",
+  "description": "Desktop beta for high-fidelity meeting and interview assistance",
+  "scripts": {
+    "clean": "rimraf dist dist-electron",
+    "clean:release": "rimraf release artifacts",
+    "dev": "vite",
+    "build": "npm run clean && tsc && vite build",
+    "build:desktop": "npm run clean && tsc && vite build && tsc -p electron/tsconfig.json",
+    "preview": "vite preview",
+    "postinstall": "cross-env SHARP_IGNORE_GLOBAL_LIBVIPS=1 npm rebuild sharp",
+    "electron:dev": "rimraf dist-electron && tsc -p electron/tsconfig.json && node scripts/run_electron_dev.js",
+    "electron:build": "tsc -p electron/tsconfig.json && cross-env NODE_ENV=production electron .",
+    "app:dev": "node scripts/app_dev.js",
+    "app:build": "npm run clean:release && npm run build:desktop && node scripts/package_release.js",
+    "watch": "tsc -p electron/tsconfig.json --watch",
+    "start": "npm run app:dev",
+    "dist": "npm run app:build",
+    "build:native": "cd electron/native && napi build --platform --release",
+    "lint": "eslint . --max-warnings 1000",
+    "lint:fix": "eslint . --ext .ts,.tsx,.js,.jsx --fix",
+    "test": "npm run test:accuracy && npm run test:interview-naturalness && npm run test:audio-echo-suppression && npm run test:e2e && npm run test:system-audio && npm run test:smoke && npm run test:meeting-summary-routing && npm run test:meeting-screenshot-persistence && npm run test:fallback",
+    "test:accuracy": "node tests/test_accuracy.js",
+    "test:interview-naturalness": "node tests/test_interview_naturalness.js",
+    "test:audio-echo-suppression": "node tests/test_audio_echo_suppression.js",
+    "test:e2e": "node tests/test_e2e.js",
+    "test:system-audio": "node tests/test_system_audio.js",
+    "test:smoke": "node tests/test_smoke.js",
+    "test:meeting-summary-routing": "node tests/meeting_summary_routing.test.js",
+    "test:prompt-settings": "node tests/prompt_settings.test.js",
+    "test:meeting-screenshot-persistence": "node tests/meeting_screenshot_persistence.test.js",
+    "diag:electron": "node tests/test-electron.js",
+    "test:fallback": "node tests/test_audio_fallback.js",
+    "test:benchmark": "node tests/benchmark_audio.js",
+    "test:eval": "node tests/eval/run_eval.js"
+  },
+  "build": {
+    "appId": "com.electron.ghost-writer",
+    "productName": "Ghost Writer",
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "package.json",
+      "node_modules/**/*",
+      "!**/electron/native/target/**",
+      "!**/electron/native/src/**",
+      "!**/electron/native/.cargo/**"
+    ],
+    "asarUnpack": [
+      "**/*.node",
+      "node_modules/better-sqlite3/**/*",
+      "node_modules/tesseract.js-core/**/*"
+    ],
+    "directories": {
+      "output": "release",
+      "buildResources": "assets"
+    },
+    "npmRebuild": false,
+    "buildDependenciesFromSource": false,
+    "extraResources": [
+      {
+        "from": "assets/",
+        "to": "assets/",
+        "filter": [
+          "**/*",
+          "!whisper-bin/**"
+        ]
+      },
+      {
+        "from": "electron/services/mobile_view/",
+        "to": "mobile_view/",
+        "filter": [
+          "index.html"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "Ghost.Writer.Setup.${ext}",
+      "icon": "assets/icons/win/icon.ico",
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "artifactName": "Ghost.Writer.${arch}.${ext}",
+      "icon": "assets/icons/mac/icon.icns",
+      "category": "public.app-category.productivity",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "type": "distribution",
+      "entitlements": "assets/entitlements.mac.plist",
+      "entitlementsInherit": "assets/entitlements.mac.plist"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "lazylabsai",
+        "repo": "Ghost_Writer",
+        "releaseType": "release"
+      }
+    ]
+  },
+  "keywords": [],
+  "author": "LaZy Labs Team",
+  "license": "Proprietary",
+  "engines": {
+    "node": "20 || >=22",
+    "npm": ">=10"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^3.5.1",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/color": "^4.2.0",
+    "@types/diff": "^6.0.0",
+    "@types/electron": "^1.4.38",
+    "@types/node": "^22.9.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@types/react-syntax-highlighter": "^15.5.13",
+    "@types/screenshot-desktop": "^1.12.3",
+    "@types/three": "^0.182.0",
+    "@types/uuid": "^9.0.8",
+    "@types/ws": "^8.18.1",
+    "@typescript-eslint/eslint-plugin": "^8.14.0",
+    "@typescript-eslint/parser": "^8.14.0",
+    "@vitejs/plugin-react": "^4.3.3",
+    "autoprefixer": "^10.4.20",
+    "concurrently": "^9.1.0",
+    "cross-env": "^7.0.3",
+    "electron": "^32.3.3",
+    "electron-builder": "^25.1.8",
+    "node-addon-api": "^8.5.0",
+    "postcss": "^8.4.49",
+    "rimraf": "^6.0.1",
+    "tailwindcss": "^3.4.15",
+    "tap": "^21.5.0",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11",
+    "vite-plugin-electron": "^0.28.8",
+    "vite-plugin-electron-renderer": "^0.14.6",
+    "wait-on": "^8.0.1"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.74.0",
+    "@bany/curl-to-json": "^1.2.10",
+    "@google-cloud/speech": "^7.2.1",
+    "@google/genai": "^0.12.0",
+    "@grpc/grpc-js": "^1.14.3",
+    "@grpc/proto-loader": "^0.8.0",
+    "@radix-ui/react-dialog": "^1.1.2",
+    "@radix-ui/react-toast": "^1.2.2",
+    "@supabase/supabase-js": "^2.98.0",
+    "@xenova/transformers": "^2.17.2",
+    "axios": "^1.7.7",
+    "better-sqlite3": "12.6.2",
+    "class-variance-authority": "^0.7.0",
+    "clsx": "^2.1.1",
+    "diff": "^7.0.0",
+    "dotenv": "^17.2.3",
+    "electron-updater": "^6.7.3",
+    "form-data": "^4.0.1",
+    "framer-motion": "^12.29.2",
+    "groq-sdk": "^0.37.0",
+    "jspdf": "^4.0.0",
+    "katex": "^0.16.27",
+    "lucide-react": "^0.460.0",
+    "mammoth": "^1.11.0",
+    "node-machine-id": "^1.1.12",
+    "openai": "^6.19.0",
+    "pdf-parse": "^2.4.5",
+    "react": "^18.3.1",
+    "react-code-blocks": "^0.1.6",
+    "react-dom": "^18.3.1",
+    "react-icons": "^5.3.0",
+    "react-markdown": "^10.1.0",
+    "react-query": "^3.39.3",
+    "react-syntax-highlighter": "^15.6.1",
+    "rehype-katex": "^7.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0",
+    "screenshot-desktop": "^1.15.0",
+    "sharp": "^0.33.5",
+    "tailwind-merge": "^2.5.4",
+    "tesseract.js": "^5.0.5",
+    "three": "^0.182.0",
+    "uuid": "^11.0.3",
+    "ws": "^8.19.0"
+  },
+  "optionalDependencies": {
+    "ghost-writer-audio": "file:./electron/native"
+  }
+}

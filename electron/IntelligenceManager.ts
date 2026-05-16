@@ -1,0 +1,1329 @@
+// IntelligenceManager.ts
+// Central orchestrator for the 5-mode intelligence layer
+// Uses mode-specific LLMs for Ghost Writer-style interview copilot
+
+import { EventEmitter } from 'events';
+import { LLMHelper } from './LLMHelper';
+import fs from 'fs';
+import path from 'path';
+import { logger, ModuleLogger } from './utils/logger';
+import { AnalyticsManager } from './services/AnalyticsManager';
+
+export interface TranscriptSegment {
+    marker?: string;
+    speaker: string;
+    text: string;
+    timestamp: number;
+    final: boolean;
+    confidence?: number;
+}
+
+export interface SuggestionTrigger {
+    context: string;
+    lastQuestion: string;
+    confidence: number;
+}
+
+import { 
+    InterviewCopilot, 
+    MeetingCopilot, 
+    MeetingSummarizer, 
+    AssistLLM,
+    FollowUpLLM,
+    RecapLLM,
+    FollowUpQuestionsLLM,
+    prepareTranscriptForWhatToAnswer, 
+    GROQ_TITLE_PROMPT, 
+    GROQ_SUMMARY_JSON_PROMPT, 
+    buildPromptForMode, 
+    buildTemporalContext, 
+    AssistantResponse, 
+    classifyIntent, 
+    postProcessForInterview 
+} from './llm';
+import { desktopCapturer } from 'electron';
+import { DatabaseManager, Meeting } from './db/DatabaseManager';
+import { ContextDocumentManager } from './services/ContextDocumentManager';
+import { CredentialsManager } from './services/CredentialsManager';
+const crypto = require('crypto');
+import { app } from 'electron';
+
+
+export const GEMINI_FLASH_MODEL = "gemini-3-flash-preview";
+export const GEMINI_PRO_MODEL = "gemini-3-pro-preview";
+
+// Refinement intent detection (refined to avoid false positives)
+function detectRefinementIntent(userText: string): { isRefinement: boolean; intent: string } {
+    const lowercased = userText.toLowerCase().trim();
+    const refinementPatterns = [
+        { pattern: /make it shorter|shorten this|be brief/i, intent: 'shorten' },
+        { pattern: /make it longer|expand on this|elaborate more/i, intent: 'expand' },
+        { pattern: /rephrase that|say it differently|put it another way/i, intent: 'rephrase' },
+        { pattern: /give me an example|provide an instance/i, intent: 'add_example' },
+        { pattern: /make it more confident|be more assertive|sound stronger/i, intent: 'more_confident' },
+        { pattern: /make it casual|be less formal|sound relaxed/i, intent: 'more_casual' },
+        { pattern: /make it formal|be more professional|sound professional/i, intent: 'more_formal' },
+        { pattern: /simplify this|make it simpler|explain specifically/i, intent: 'simplify' },
+    ];
+
+    for (const { pattern, intent } of refinementPatterns) {
+        if (pattern.test(lowercased)) {
+            return { isRefinement: true, intent };
+        }
+    }
+
+    return { isRefinement: false, intent: '' };
+}
+
+// Context item matching Swift ContextManager structure
+export interface ContextItem {
+    role: 'interviewer' | 'user' | 'assistant';
+    text: string;
+    timestamp: number;
+    speaker?: string; // Original speaker label (e.g. "Person 1")
+}
+
+// Mode types
+export type IntelligenceMode = 'idle' | 'assist' | 'what_to_say' | 'follow_up' | 'recap' | 'manual' | 'follow_up_questions';
+
+// Events emitted by IntelligenceManager
+export interface IntelligenceModeEvents {
+    'assist_update': (insight: string) => void;
+    'suggested_answer': (answer: string, question: string, confidence: number) => void;
+    'suggested_answer_token': (token: string, question: string, confidence: number) => void;
+    'refined_answer': (answer: string, intent: string) => void;
+    'refined_answer_token': (token: string, intent: string) => void;
+    'recap': (summary: string) => void;
+    'recap_token': (token: string) => void;
+    'follow_up_questions_update': (questions: string) => void;
+    'follow_up_questions_token': (token: string) => void;
+    'manual_answer_started': () => void;
+    'manual_answer_result': (answer: string, question: string) => void;
+    'mode_changed': (mode: IntelligenceMode) => void;
+    'error': (error: Error, mode: IntelligenceMode) => void;
+}
+
+/**
+ * IntelligenceManager - Central orchestrator for all intelligence modes
+ * Now uses mode-specific LLMs with strict token limits and post-processing
+ * 
+ * Modes:
+ * 1. Assist (passive) - Low-priority insights, cancelable
+ * 2. WhatShouldISay (primary) - Auto-triggered answers
+ * 3. FollowUp (refinement) - Operate on last assistant message  
+ * 4. Recap (summary) - Manual or auto on long conversations
+ * 5. Manual (fallback) - Explicit user bypass
+ */
+export class IntelligenceManager extends EventEmitter {
+    // Context management (mirrors Swift ContextManager)
+    private contextItems: ContextItem[] = [];
+    private readonly contextWindowDuration: number = 120; // 120 seconds
+    private readonly maxContextItems: number = 500;
+
+    // Last assistant message for follow-up mode
+    private lastAssistantMessage: string | null = null;
+
+    // Temporal RAG: Track all assistant responses in session for anti-repetition
+    private assistantResponseHistory: AssistantResponse[] = [];
+
+    private currentMeetingMetadata: {
+        title?: string;
+        calendarEventId?: string;
+        source?: 'manual' | 'calendar';
+    } | null = null;
+
+    private log: ModuleLogger;
+
+    private currentScreenshots: string[] = [];
+    private meetingScreenshotSessionDir: string | null = null;
+
+    public setMeetingMetadata(metadata: any = null) {
+        this.currentMeetingMetadata = metadata ?? null;
+        this.currentScreenshots = [];
+        this.meetingScreenshotSessionDir = null;
+    }
+
+    public addMeetingScreenshot(path: string) {
+        const persistedPath = this.persistMeetingScreenshot(path);
+        if (!this.currentScreenshots.includes(persistedPath)) {
+            this.currentScreenshots.push(persistedPath);
+        }
+    }
+
+    private ensureMeetingScreenshotSessionDir(): string {
+        if (this.meetingScreenshotSessionDir) {
+            return this.meetingScreenshotSessionDir;
+        }
+
+        const sessionId = typeof crypto.randomUUID === 'function'
+            ? crypto.randomUUID()
+            : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+        this.meetingScreenshotSessionDir = path.join(
+            app.getPath('userData'),
+            'meeting_screenshots',
+            sessionId
+        );
+        fs.mkdirSync(this.meetingScreenshotSessionDir, { recursive: true });
+        return this.meetingScreenshotSessionDir;
+    }
+
+    private persistMeetingScreenshot(sourcePath: string): string {
+        try {
+            if (!sourcePath || !fs.existsSync(sourcePath)) {
+                return sourcePath;
+            }
+
+            const sessionDir = this.ensureMeetingScreenshotSessionDir();
+            const ext = path.extname(sourcePath) || '.png';
+            const filename = `${typeof crypto.randomUUID === 'function'
+                ? crypto.randomUUID()
+                : `${Date.now()}-${Math.random().toString(16).slice(2)}`}${ext}`;
+            const targetPath = path.join(sessionDir, filename);
+
+            fs.copyFileSync(sourcePath, targetPath);
+            return targetPath;
+        } catch (error) {
+            this.log.error(`Failed to persist meeting screenshot ${sourcePath}`, error);
+            return sourcePath;
+        }
+    }
+
+    // Mode state
+    private activeMode: IntelligenceMode = 'idle';
+    private assistCancellationToken: AbortController | null = null;
+
+    // Mode-specific LLMs (new architecture)
+    private interviewCopilot: InterviewCopilot;
+    private meetingCopilot: MeetingCopilot;
+    private meetingSummarizer: MeetingSummarizer;
+    private assistLLM: AssistLLM | null = null;
+    private followUpLLM: FollowUpLLM | null = null;
+    private recapLLM: RecapLLM | null = null;
+    private followUpQuestionsLLM: FollowUpQuestionsLLM | null = null;
+
+    // Keep reference to LLMHelper for client access
+    private llmHelper: LLMHelper;
+
+    // Timestamps for tracking
+    private lastTranscriptTime: number = 0;
+    private lastTriggerTime: number = 0;
+    private readonly triggerCooldown: number = 2000; // 2 seconds
+    private currentModel: string = GEMINI_FLASH_MODEL;
+
+
+
+    constructor(llmHelper: LLMHelper) {
+        super();
+        this.log = logger.createChild('IntelligenceManager');
+        this.llmHelper = llmHelper;
+        this.initializeLLMs();
+
+        // Forward LLMHelper events
+        this.llmHelper.on('model-status', (info) => {
+            this.emit('model-status', info);
+        });
+
+        this.llmHelper.on('active-model', (info) => {
+            this.emit('active-model', info);
+        });
+
+    }
+
+
+
+    /**
+     * Initialize or Re-Initialize mode-specific LLMs with shared Gemini client and Groq client
+     * Must be called after API keys are updated.
+     */
+    public initializeLLMs(): void {
+        // Initializing mode-specific LLMs
+        this.interviewCopilot = new InterviewCopilot(this.llmHelper);
+        this.meetingCopilot = new MeetingCopilot(this.llmHelper);
+        this.meetingSummarizer = new MeetingSummarizer(this.llmHelper);
+        
+        this.assistLLM = new AssistLLM(this.llmHelper);
+        this.followUpLLM = new FollowUpLLM(this.llmHelper);
+        this.recapLLM = new RecapLLM(this.llmHelper);
+        this.followUpQuestionsLLM = new FollowUpQuestionsLLM(this.llmHelper);
+    }
+
+    public setModel(modelName: string): void {
+        // Switching model
+        this.currentModel = modelName;
+        this.initializeLLMs();
+        // switchToGemini is async - must catch the promise, not use sync try/catch
+        this.llmHelper.switchToGemini(undefined, modelName).catch((err: unknown) => {
+            console.warn(`[IntelligenceManager] Could not switch to ${modelName}: ${err instanceof Error ? err.message : err}`);
+        });
+    }
+
+    // ============================================
+    // Context Management (mirrors Swift ContextManager)
+    // ============================================
+
+    /**
+     * Add a transcript segment to context
+     * Only stores FINAL transcripts
+     */
+    addTranscript(segment: TranscriptSegment, skipRefinementCheck: boolean = false): void {
+        if (!segment.final) return;
+
+        const role = this.mapSpeakerToRole(segment.speaker);
+        const text = segment.text.trim();
+
+        if (!text) return;
+
+        // Deduplicate: check if this exact item already exists
+        const lastItem = this.contextItems[this.contextItems.length - 1];
+        if (lastItem &&
+            lastItem.role === role &&
+            Math.abs(lastItem.timestamp - segment.timestamp) < 500 &&
+            lastItem.text === text) {
+            return;
+        }
+
+        this.contextItems.push({
+            role: role as any,
+            text,
+            timestamp: segment.timestamp,
+            speaker: segment.speaker
+        });
+
+        this.evictOldEntries();
+        this.lastTranscriptTime = Date.now();
+
+        // Log to file
+        // Map role to user request: "microphone input as user and system audio tagged as interviewer"
+        // 'user' -> 'USER'
+        // 'interviewer' -> 'INTERVIEWER'
+
+        // Filter out internal system prompts that might be passed via IPC
+        const isInternalPrompt = text.startsWith("You are a real-time interview assistant") ||
+            text.startsWith("You are a helper") ||
+            text.startsWith("CONTEXT:");
+
+        if (!isInternalPrompt) {
+
+            // Add to session transcript
+            this.fullTranscript.push(segment);
+            // Cap transcript at 2000 segments to prevent memory leaks
+            if (this.fullTranscript.length > 2000) {
+                this.fullTranscript = this.fullTranscript.slice(-2000);
+            }
+        }
+
+        // Check for follow-up intent if user is speaking
+        if (!skipRefinementCheck && role === 'user' && this.lastAssistantMessage) {
+            const { isRefinement, intent } = detectRefinementIntent(text);
+            if (isRefinement) {
+                this.runFollowUp(intent, text);
+            }
+        }
+    }
+
+    /**
+     * Add assistant-generated message to context
+     */
+    addAssistantMessage(text: string): void {
+        // addAssistantMessage
+
+        // Ghost Writer style filtering
+        if (!text) return;
+
+        const cleanText = text.trim();
+        if (cleanText.length < 10) {
+            console.warn(`[IntelligenceManager] Ignored short message (<10 chars)`);
+            return;
+        }
+
+        if (cleanText.includes("I'm not sure") || cleanText.includes("I can't answer")) {
+            console.warn(`[IntelligenceManager] Ignored fallback message`);
+            return;
+        }
+
+        this.contextItems.push({
+            role: 'assistant',
+            text: cleanText,
+            timestamp: Date.now()
+        });
+
+        // Also add to fullTranscript so it persists in the session history (and summaries)
+        this.fullTranscript.push({
+            speaker: 'assistant',
+            text: cleanText,
+            timestamp: Date.now(),
+            final: true,
+            confidence: 1.0
+        });
+
+        // Cap transcript
+        if (this.fullTranscript.length > 2000) {
+            this.fullTranscript = this.fullTranscript.slice(-2000);
+        }
+
+        this.lastAssistantMessage = cleanText;
+
+        // Temporal RAG: Track response history for anti-repetition
+        this.assistantResponseHistory.push({
+            text: cleanText,
+            timestamp: Date.now(),
+            questionContext: this.getLastInterviewerTurn() || 'unknown'
+        });
+
+        // Keep history bounded (last 10 responses)
+        if (this.assistantResponseHistory.length > 10) {
+            this.assistantResponseHistory = this.assistantResponseHistory.slice(-10);
+        }
+
+        // lastAssistantMessage updated
+        this.evictOldEntries();
+    }
+
+    /**
+     * Get context items within the last N seconds
+     */
+    getContext(lastSeconds: number = 120): ContextItem[] {
+        const cutoff = Date.now() - (lastSeconds * 1000);
+        return this.contextItems.filter(item => item.timestamp >= cutoff);
+    }
+
+    /**
+     * Get the last assistant message
+     */
+    getLastAssistantMessage(): string | null {
+        return this.lastAssistantMessage;
+    }
+
+    /**
+     * Get formatted context string for LLM prompts
+     */
+    getFormattedContext(lastSeconds: number = 120): string {
+        const items = this.getContext(lastSeconds);
+
+        // Inject latest interim transcript if available and recent (not older than 10s)
+        const now = Date.now();
+        if (this.lastInterimInterviewer &&
+            (now - this.lastInterimInterviewer.timestamp < 10000) &&
+            this.lastInterimInterviewer.text.trim().length > 0) {
+
+            // Check if it's already in items (last item might be its final version)
+            const lastItem = items[items.length - 1];
+            const isDuplicate = lastItem &&
+                lastItem.role === 'interviewer' &&
+                (lastItem.text === this.lastInterimInterviewer.text || Math.abs(lastItem.timestamp - this.lastInterimInterviewer!.timestamp) < 1000);
+
+            if (!isDuplicate) {
+                items.push({
+                    role: 'interviewer',
+                    text: this.lastInterimInterviewer.text,
+                    timestamp: this.lastInterimInterviewer.timestamp
+                });
+            }
+        }
+
+        return items.map(item => {
+            const label = item.role === 'interviewer' ? 'INTERVIEWER' :
+                item.role === 'user' ? 'ME' :
+                    'ASSISTANT (PREVIOUS SUGGESTION)';
+            return `[${label}]: ${item.text}`;
+        }).join('\n');
+    }
+
+    /**
+     * Get the last interviewer turn
+     */
+    getLastInterviewerTurn(): string | null {
+        for (let i = this.contextItems.length - 1; i >= 0; i--) {
+            if (this.contextItems[i].role === 'interviewer') {
+                return this.contextItems[i].text;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Get full session context from accumulated transcript (User + Interviewer + Assistant)
+     */
+    private getFullSessionContext(): string {
+        const transcript = [...this.fullTranscript];
+
+        // Inject latest interim transcript if available and recent (not older than 10s)
+        const now = Date.now();
+        if (this.lastInterimInterviewer &&
+            (now - this.lastInterimInterviewer.timestamp < 10000) &&
+            this.lastInterimInterviewer.text.trim().length > 0) {
+
+            const lastSegment = transcript[transcript.length - 1];
+            const isDuplicate = lastSegment &&
+                lastSegment.speaker === 'interviewer' &&
+                (lastSegment.text === this.lastInterimInterviewer.text || Math.abs(lastSegment.timestamp - this.lastInterimInterviewer!.timestamp) < 1000);
+
+            if (!isDuplicate) {
+                transcript.push({
+                    ...this.lastInterimInterviewer,
+                    final: true // Mark as final for the context view
+                });
+            }
+        }
+
+        return transcript.map(segment => {
+            const role = this.mapSpeakerToRole(segment.speaker);
+            const isMeetingMode = CredentialsManager.getInstance().getIsMeetingMode();
+            
+            let label = 'ASSISTANT';
+            if (role === 'user') {
+                label = 'YOU';
+            } else if (role === 'interviewer') {
+                label = isMeetingMode ? 'PERSON 1' : 'INTERVIEWER 1';
+            }
+            
+            return `[${label}]: ${segment.text}`;
+        }).join('\n');
+    }
+
+    private mapSpeakerToRole(speaker: string): 'interviewer' | 'user' | 'assistant' {
+        if (speaker === 'user') return 'user';
+        if (speaker === 'assistant') return 'assistant';
+        return 'interviewer'; // system audio = interviewer
+    }
+
+    private evictOldEntries(): void {
+        const cutoff = Date.now() - (this.contextWindowDuration * 1000);
+        this.contextItems = this.contextItems.filter(item => item.timestamp >= cutoff);
+
+        // Safety limit
+        if (this.contextItems.length > this.maxContextItems) {
+            this.contextItems = this.contextItems.slice(-this.maxContextItems);
+        }
+    }
+
+    // ============================================
+    // Mode Executors (using mode-specific LLMs)
+    // ============================================
+
+    /**
+     * MODE 1: Assist (Passive)
+     * Low-priority observational insights
+     */
+    async runAssistMode(): Promise<string | null> {
+        // Cancel if higher priority mode is active
+        if (this.activeMode !== 'idle' && this.activeMode !== 'assist') {
+            return null;
+        }
+
+        // Cancel previous assist if running
+        if (this.assistCancellationToken) {
+            this.assistCancellationToken.abort();
+        }
+
+        this.assistCancellationToken = new AbortController();
+        this.setMode('assist');
+
+        try {
+            if (!this.assistLLM) {
+                this.setMode('idle');
+                return null;
+            }
+
+            const context = this.getFormattedContext(60); // Last 60 seconds
+            if (!context) {
+                this.setMode('idle');
+                return null;
+            }
+
+            const insight = await this.assistLLM.generate(context);
+
+            // Check if cancelled
+            if (this.assistCancellationToken?.signal.aborted) {
+                return null;
+            }
+
+            if (insight) {
+                this.emit('assist_update', insight);
+            }
+            this.setMode('idle');
+            return insight;
+
+        } catch (error) {
+            if ((error as Error).name === 'AbortError') {
+                return null;
+            }
+            this.emit('error', error as Error, 'assist');
+            this.setMode('idle');
+            return null;
+        }
+    }
+
+    /**
+     * MODE 2: What Should I Say (Primary)
+     * Manual trigger - uses clean transcript pipeline for question inference
+     * NEVER returns null - always provides a usable response
+     * @param question - Optional explicit question
+     * @param confidence - Confidence score (default 0.8)
+     * @param imagePath - Optional path to screenshot for visual context
+     */
+    async runWhatShouldISay(question?: string, confidence: number = 0.8, imagePath?: string): Promise<string | null> {
+        const now = Date.now();
+
+        // Autowire the latest screenshot captured via Ctrl+H if no explicit image was passed
+        let targetImagePath = imagePath;
+        if (!targetImagePath && this.currentScreenshots.length > 0) {
+            targetImagePath = this.currentScreenshots[this.currentScreenshots.length - 1];
+            console.log(`[IntelligenceManager] Picked up implicit screenshot for WhatShouldISay: ${targetImagePath}`);
+        }
+
+        // Cooldown check
+        if (now - this.lastTriggerTime < this.triggerCooldown) {
+            return null;
+        }
+
+        // Cancel assist mode if active
+        if (this.assistCancellationToken) {
+            this.assistCancellationToken.abort();
+            this.assistCancellationToken = null;
+        }
+
+        this.setMode('what_to_say');
+        this.lastTriggerTime = now;
+
+        try {
+            // Prepare transcript using the new clean pipeline
+            // Use 600 seconds (10 min) window for broad context
+            const contextItems = this.getContext(600);
+
+            // Inject latest interim transcript if available (critical for latency)
+            if (this.lastInterimInterviewer && this.lastInterimInterviewer.text.trim().length > 0) {
+                // Check if it's not already in context (by timestamp proximity or exact text)
+                const lastItem = contextItems[contextItems.length - 1];
+                const isDuplicate = lastItem &&
+                    lastItem.role === 'interviewer' &&
+                    (lastItem.text === this.lastInterimInterviewer.text || Math.abs(lastItem.timestamp - this.lastInterimInterviewer.timestamp) < 1000); // 1s buffer
+
+                if (!isDuplicate) {
+                    // Interim transcript injection
+                    contextItems.push({
+                        role: 'interviewer',
+                        text: this.lastInterimInterviewer.text,
+                        timestamp: this.lastInterimInterviewer.timestamp
+                    });
+                }
+            }
+
+            const transcriptTurns = contextItems.map(item => ({
+                role: item.role,
+                text: item.text,
+                timestamp: item.timestamp,
+                speaker: item.speaker
+            }));
+
+            // Clean, sparsify, format in one call
+            const preparedTranscript = prepareTranscriptForWhatToAnswer(transcriptTurns, 30);
+
+            // Build temporal context for anti-repetition (Temporal RAG)
+            const temporalContext = buildTemporalContext(
+                contextItems,
+                this.assistantResponseHistory,
+                600 // 10 minute window
+            );
+
+            // Classify intent for answer shaping (lightweight, ~0-5ms)
+            const lastInterviewerTurn = this.getLastInterviewerTurn();
+            const intentResult = classifyIntent(
+                lastInterviewerTurn,
+                preparedTranscript,
+                this.assistantResponseHistory.length
+            );
+
+            const isMeetingMode = CredentialsManager.getInstance().getIsMeetingMode();
+            const cancellationToken = new AbortController();
+            this.assistCancellationToken = cancellationToken;
+
+            let fullAnswer = "";
+            let stream;
+
+            if (isMeetingMode) {
+                stream = this.meetingCopilot.generateAnswerStream(
+                    preparedTranscript,
+                    temporalContext,
+                    intentResult,
+                    targetImagePath,
+                    cancellationToken.signal
+                );
+            } else {
+                stream = this.interviewCopilot.generateAnswerStream(
+                    preparedTranscript,
+                    temporalContext,
+                    intentResult,
+                    targetImagePath,
+                    cancellationToken.signal
+                );
+            }
+
+            for await (const token of stream) {
+                this.emit('suggested_answer_token', token, question || 'inferred', confidence);
+                fullAnswer += token;
+            }
+
+            // Post-process: strip meta-commentary, filler, and enforce intent-adaptive length
+            fullAnswer = postProcessForInterview(
+                fullAnswer,
+                intentResult.intent,
+                temporalContext.previousResponses
+            );
+
+            // Store in context (WhatToAnswerLLM never returns empty)
+            this.addAssistantMessage(fullAnswer);
+
+            // Log Usage
+            this.fullUsage.push({
+                type: 'assist',
+                timestamp: Date.now(),
+                question: question || 'What to Answer',
+                answer: fullAnswer
+            });
+            // Cap usage history
+            if (this.fullUsage.length > 500) {
+                this.fullUsage = this.fullUsage.slice(-500);
+            }
+
+            // Emit completion event (legacy consumers + done signal)
+            this.emit('suggested_answer', fullAnswer, question || 'What to Answer', confidence);
+
+            this.setMode('idle');
+            return fullAnswer;
+
+        } catch (error) {
+            this.emit('error', error as Error, 'what_to_say');
+            this.setMode('idle');
+            // Never fail silently - return a usable fallback
+            return "Could you repeat that? I want to make sure I address your question properly.";
+        }
+    }
+
+    /**
+     * MODE 3: Follow-Up (Refinement)
+     * Modify the last assistant message
+     */
+    async runFollowUp(intent: string, userRequest?: string, imagePath?: string): Promise<string | null> {
+        console.log(`[IntelligenceManager] runFollowUp called with intent: ${intent}`);
+        if (!this.lastAssistantMessage) {
+            console.warn('[IntelligenceManager] No lastAssistantMessage found for follow-up');
+            return null;
+        }
+
+        this.setMode('follow_up');
+
+        try {
+            if (!this.followUpLLM) {
+                console.error('[IntelligenceManager] FollowUpLLM not initialized');
+                this.setMode('idle');
+                return null;
+            }
+
+            const context = this.getFormattedContext(60);
+            const refinementRequest = userRequest || intent;
+            const targetImagePath = imagePath || this.currentScreenshots[this.currentScreenshots.length - 1];
+
+            let fullRefined = "";
+            const stream = this.followUpLLM.generateStream(
+                this.lastAssistantMessage,
+                refinementRequest,
+                context,
+                targetImagePath
+            );
+
+            for await (const token of stream) {
+                this.emit('refined_answer_token', token, intent);
+                fullRefined += token;
+            }
+
+            if (fullRefined) {
+                // Store refined answer
+                this.addAssistantMessage(fullRefined);
+                this.emit('refined_answer', fullRefined, intent);
+
+                // Log Usage
+                // Production-ready labeling map
+                const intentMap: Record<string, string> = {
+                    'shorten': 'Shorten Answer',
+                    'expand': 'Expand Answer',
+                    'rephrase': 'Rephrase Answer',
+                    'add_example': 'Add Example',
+                    'more_confident': 'Make More Confident',
+                    'more_casual': 'Make More Casual',
+                    'more_formal': 'Make More Formal',
+                    'simplify': 'Simplify Answer'
+                };
+
+                const displayQuestion = userRequest || intentMap[intent] || `Refining: ${intent}`;
+
+                this.fullUsage.push({
+                    type: 'followup',
+                    timestamp: Date.now(),
+                    question: displayQuestion,
+                    answer: fullRefined
+                });
+                // Cap usage history
+                if (this.fullUsage.length > 500) {
+                    this.fullUsage = this.fullUsage.slice(-500);
+                }
+            }
+
+            this.setMode('idle');
+            return fullRefined;
+
+        } catch (error) {
+            this.emit('error', error as Error, 'follow_up');
+            this.setMode('idle');
+            return null;
+        }
+    }
+
+    /**
+     * MODE 4: Recap (Summary)
+     * Neutral conversation summary
+     */
+    async runRecap(): Promise<string | null> {
+        console.log('[IntelligenceManager] runRecap called');
+        this.setMode('recap');
+
+        try {
+            const result = await this.meetingSummarizer.summarize(this.fullTranscript);
+            if (!result) {
+                this.setMode('idle');
+                return null;
+            }
+
+            const fullSummary = JSON.stringify({
+                overview: result.context,
+                keyPoints: result.decisions,
+                actionItems: result.actionItems
+            });
+
+            if (fullSummary) {
+                this.emit('recap', fullSummary);
+
+                // Log Usage
+                this.fullUsage.push({
+                    type: 'chat', // Using 'chat' for generic interaction, or add 'recap' type if supported by UI
+                    timestamp: Date.now(),
+                    question: 'Recap Meeting',
+                    answer: fullSummary
+                });
+                // Cap usage history
+                if (this.fullUsage.length > 500) {
+                    this.fullUsage = this.fullUsage.slice(-500);
+                }
+            }
+            this.setMode('idle');
+            return fullSummary;
+
+        } catch (error) {
+            this.emit('error', error as Error, 'recap');
+            this.setMode('idle');
+            return null;
+        }
+    }
+
+    /**
+     * MODE 6: Follow-Up Questions
+     * Suggest strategic questions for the user to ask
+     */
+    async runFollowUpQuestions(imagePath?: string): Promise<string | null> {
+        console.log('[IntelligenceManager] runFollowUpQuestions called');
+        this.setMode('follow_up_questions');
+
+        try {
+            if (!this.followUpQuestionsLLM) {
+                console.error('[IntelligenceManager] FollowUpQuestionsLLM not initialized');
+                this.setMode('idle');
+                return null;
+            }
+
+            const context = this.getFormattedContext(120);
+            if (!context) {
+                console.warn('[IntelligenceManager] No context available for follow-up questions');
+                this.setMode('idle');
+                return null;
+            }
+            const targetImagePath = imagePath || this.currentScreenshots[this.currentScreenshots.length - 1];
+
+            let fullQuestions = "";
+            const stream = this.followUpQuestionsLLM.generateStream(context, targetImagePath);
+
+            for await (const token of stream) {
+                this.emit('follow_up_questions_token', token);
+                fullQuestions += token;
+            }
+
+            if (fullQuestions) {
+                this.emit('follow_up_questions_update', fullQuestions);
+                this.fullUsage.push({
+                    type: 'followup_questions',
+                    timestamp: Date.now(),
+                    question: 'Generate Follow-up Questions',
+                    answer: fullQuestions
+                });
+                // Cap usage history
+                if (this.fullUsage.length > 500) {
+                    this.fullUsage = this.fullUsage.slice(-500);
+                }
+            }
+            this.setMode('idle');
+            return fullQuestions;
+
+        } catch (error) {
+            this.emit('error', error as Error, 'follow_up_questions');
+            this.setMode('idle');
+            return null;
+        }
+    }
+
+    /**
+     * MODE 5: Manual Answer (Fallback)
+     * Explicit bypass when auto-detection fails
+     */
+    async runManualAnswer(question: string): Promise<string | null> {
+        this.emit('manual_answer_started');
+        this.setMode('manual');
+
+        try {
+            const isMeetingMode = CredentialsManager.getInstance().getIsMeetingMode();
+            const context = this.getFormattedContext(120);
+            let answer = "";
+            
+            if (isMeetingMode) {
+                answer = await this.meetingCopilot.generateManualAnswer(question, context);
+            } else {
+                answer = await this.interviewCopilot.generateManualAnswer(question, context);
+            }
+
+            if (answer) {
+                // Store in context
+                this.addAssistantMessage(answer);
+                this.emit('manual_answer_result', answer, question);
+
+                this.fullUsage.push({
+                    type: 'chat',
+                    timestamp: Date.now(),
+                    question: question, // Already passed correctly from user input
+                    answer: answer
+                });
+                // Cap usage history
+                if (this.fullUsage.length > 500) {
+                    this.fullUsage = this.fullUsage.slice(-500);
+                }
+            }
+
+            this.setMode('idle');
+            return answer;
+
+        } catch (error) {
+            this.emit('error', error as Error, 'manual');
+            this.setMode('idle');
+            return null;
+        }
+    }
+
+    // ============================================
+    // Trigger Handlers (from NativeAudioClient events)
+    // ============================================
+
+    /**
+     * Handle incoming transcript from native audio service
+     */
+    private lastInterimInterviewer: TranscriptSegment | null = null;
+
+    /**
+     * Handle incoming transcript from native audio service
+     */
+    handleTranscript(segment: TranscriptSegment): void {
+        // Track interim segments for interviewer to prevent data loss on stop
+        if (segment.speaker === 'interviewer') {
+            // DEBUG LOGGING
+            if (Math.random() < 0.05 || segment.final) {
+                console.log(`[IntelligenceManager] RX Interviewer Segment: Final=${segment.final} Text="${segment.text.substring(0, 50)}..."`);
+            }
+
+            if (!segment.final) {
+                this.lastInterimInterviewer = segment;
+            } else {
+                this.lastInterimInterviewer = null;
+            }
+        }
+
+        this.addTranscript(segment);
+    }
+
+    /**
+     * Handle suggestion trigger from native audio service
+     * This is the primary auto-trigger path
+     */
+    async handleSuggestionTrigger(trigger: SuggestionTrigger): Promise<void> {
+        // Confidence threshold
+        if (trigger.confidence < 0.5) {
+            return;
+        }
+
+        await this.runWhatShouldISay(trigger.lastQuestion, trigger.confidence);
+    }
+
+    // ============================================
+    // State Management
+    // ============================================
+
+    private setMode(mode: IntelligenceMode): void {
+        if (this.activeMode !== mode) {
+            this.activeMode = mode;
+            this.emit('mode_changed', mode);
+        }
+    }
+
+    getActiveMode(): IntelligenceMode {
+        return this.activeMode;
+    }
+
+    // Full Session Tracking (Persisted)
+    private fullTranscript: TranscriptSegment[] = [];
+    private fullUsage: any[] = []; // UsageInteraction
+    private sessionStartTime: number = Date.now();
+
+    /**
+     * Public method to log usage from external sources (e.g. IPC direct chat)
+     */
+    public logUsage(type: string, question: string, answer: string): void {
+        this.fullUsage.push({
+            type,
+            timestamp: Date.now(),
+            question,
+            answer
+        });
+    }
+
+    /**
+     * Save the current session to persistent storage
+     */
+    /**
+     * Stops the meeting immediately, snapshots data, and triggers background processing.
+     * Returns immediately so UI can switch.
+     */
+    public async stopMeeting(): Promise<void> {
+        console.log('[IntelligenceManager] Stopping meeting and queueing save...');
+
+        // 0. Force-save any pending interim transcript (e.g. interviewer was speaking when stopped)
+        if (this.lastInterimInterviewer) {
+            console.log('[IntelligenceManager] Force-saving pending interim transcript:', this.lastInterimInterviewer.text);
+            // Clone and mark as final so addTranscript accepts it
+            const finalSegment = { ...this.lastInterimInterviewer, final: true };
+            this.addTranscript(finalSegment);
+            this.lastInterimInterviewer = null;
+        }
+
+        // 1. Snapshot valid data BEFORE resetting
+        const durationMs = Date.now() - this.sessionStartTime;
+        if (durationMs < 1000) {
+            console.log("Meeting too short, ignoring.");
+            this.reset();
+            return;
+        }
+
+                // Capture current context documents and prompt settings for persistence
+        const contextDocs = ContextDocumentManager.getInstance().getAllDocuments();
+        const promptSettings = CredentialsManager.getInstance().getPromptSettings();
+        const contextSnapshot = {
+            ...contextDocs,
+            promptSettings,
+            isMeetingMode: CredentialsManager.getInstance().getIsMeetingMode(),
+            timestamp: Date.now()
+        };
+
+        const snapshot = {
+            transcript: [...this.fullTranscript],
+            usage: [...this.fullUsage],
+            startTime: this.sessionStartTime,
+            durationMs: durationMs,
+            context: this.getFullSessionContext(), // Use FULL session context, not just recent window
+            screenshots: [...this.currentScreenshots],
+            meetingMetadata: this.currentMeetingMetadata ? { ...this.currentMeetingMetadata } : null,
+            context_json: JSON.stringify(contextSnapshot)
+        };
+
+        // 2. Reset state immediately so new meeting can start or UI is clean
+        this.reset();
+
+        const durationStr = `${Math.floor(durationMs / 60000)}:${((durationMs % 60000) / 1000).toFixed(0).padStart(2, '0')}`;
+        const meetingId = require('crypto').randomUUID();
+
+        const placeholder: Meeting = {
+            id: meetingId,
+            title: snapshot.meetingMetadata?.title || "Processing...",
+            date: new Date().toISOString(),
+            duration: durationStr,
+            summary: "Generating summary...",
+            detailedSummary: { overview: '', actionItems: [], keyPoints: [] },
+            transcript: snapshot.transcript,
+            usage: snapshot.usage,
+            calendarEventId: snapshot.meetingMetadata?.calendarEventId,
+            source: snapshot.meetingMetadata?.source || 'manual',
+            isProcessed: false, // Mark as unprocessed initially
+            screenshots: snapshot.screenshots
+        };
+
+        try {
+            // 4. Initial Save (Placeholder) - MUST await or do before background task to avoid race
+            await DatabaseManager.getInstance().saveMeeting(placeholder, snapshot.startTime, durationMs);
+
+            // 5. Trigger Background processing
+            this.processAndSaveMeeting(snapshot, meetingId).catch(err => {
+                console.error('[IntelligenceManager] Background processing failed:', err);
+            });
+        } catch (e) {
+            console.error('[IntelligenceManager] Failed to save placeholder meeting:', e);
+        }
+        // Notify Frontend
+        const wins = require('electron').BrowserWindow.getAllWindows();
+        wins.forEach((w: any) => w.webContents.send('meetings-updated'));
+    }
+
+    /**
+     * Heavy lifting: LLM Title, Summary, and DB Write
+     */
+    public async regenerateMeetingSummary(meetingId: string): Promise<Meeting | null> {
+        this.log.info(`Regenerating summary for meeting: ${meetingId}`);
+        const db = DatabaseManager.getInstance();
+        const meeting = db.getMeetingDetails(meetingId);
+
+        if (!meeting || !meeting.transcript || meeting.transcript.length === 0) {
+            this.log.warn(`Cannot regenerate: meeting not found or has no transcript.`);
+            return null;
+        }
+
+        // 1. Prepare context from transcript
+        const isMeetingMode = CredentialsManager.getInstance().getIsMeetingMode();
+        
+        try {
+            // 2. Generate summary using the new specialized service
+            const result = await this.meetingSummarizer.summarize(meeting.transcript.map(s => ({
+                ...s,
+                final: true
+            })));
+
+            if (result) {
+                const summaryData = {
+                    overview: result.context || '',
+                    keyPoints: result.decisions || [],
+                    actionItems: result.actionItems || []
+                };
+                
+                db.updateMeetingSummary(meetingId, summaryData);
+                this.log.info(`Successfully regenerated and saved summary for ${meetingId}`);
+
+                // Report to Enterprise Analytics (Supabase)
+                AnalyticsManager.getInstance().reportMeetingSession({
+                    duration_ms: 0, // Regeneration doesn't change duration
+                    summary_status: 'regenerated',
+                    metadata: { meetingId, source: 'manual_regeneration' }
+                }).catch(() => {});
+                
+                // Fetch updated meeting to return
+                return db.getMeetingDetails(meetingId);
+            }
+        } catch (error) {
+            this.log.error("Error during regeneration phase", error);
+        }
+
+        return null;
+    }
+
+    private async processAndSaveMeeting(data: {
+        transcript: TranscriptSegment[],
+        usage: any[],
+        startTime: number,
+        durationMs: number,
+        context: string,
+        screenshots: string[],
+        meetingMetadata: {
+            title?: string;
+            calendarEventId?: string;
+            source?: 'manual' | 'calendar';
+        } | null;
+        context_json?: string;
+    }, meetingId: string): Promise<void> {
+        let title = "Untitled Session";
+        let summaryData: { overview?: string, actionItems: string[], keyPoints: string[] } = { actionItems: [], keyPoints: [] };
+        let calendarEventId: string | undefined;
+        let source: 'manual' | 'calendar' = 'manual';
+
+        if (data.meetingMetadata) {
+            if (data.meetingMetadata.title) title = data.meetingMetadata.title;
+            if (data.meetingMetadata.calendarEventId) calendarEventId = data.meetingMetadata.calendarEventId;
+            if (data.meetingMetadata.source) source = data.meetingMetadata.source;
+        }
+
+        try {
+            // Generate Title (only if not set by calendar)
+            if (!data.meetingMetadata || !data.meetingMetadata.title) {
+                const generatedTitle = await this.meetingSummarizer.generateTitle(data.transcript);
+                if (generatedTitle) title = generatedTitle;
+            }
+
+            // Generate structured summary (robust strategy)
+            if (data.transcript.length > 2) {
+                const result = await this.meetingSummarizer.summarize(data.transcript);
+
+                if (result) {
+                    summaryData = {
+                        overview: result.context || '',
+                        keyPoints: result.decisions || [],
+                        actionItems: result.actionItems || []
+                    };
+                    console.log(`[IntelligenceManager] Summary generated via MeetingSummarizer`);
+                } else {
+                    console.warn('[IntelligenceManager] MeetingSummarizer returned empty summary');
+                }
+            } else {
+                console.log("Transcript too short for summary generation.");
+            }
+        } catch (e) {
+            console.error("Error generating meeting metadata", e);
+        }
+
+        try {
+            // Prepare Meeting Object
+            // meetingId is passed in now!
+            const minutes = Math.floor(data.durationMs / 60000);
+            const seconds = ((data.durationMs % 60000) / 1000).toFixed(0);
+            const durationStr = `${minutes}:${Number(seconds) < 10 ? '0' : ''}${seconds}`;
+
+            const summaryText = summaryData?.overview || "Meeting summarized.";
+
+            const meetingData: Meeting = {
+                id: meetingId,
+                title: title,
+                date: new Date(data.startTime).toISOString(),
+                duration: durationStr,
+                summary: summaryText,
+                detailedSummary: summaryData,
+                transcript: data.transcript,
+                usage: data.usage,
+                calendarEventId: calendarEventId,
+                source: source,
+                isProcessed: true, // Mark as processed
+                screenshots: [...data.screenshots],
+                context_json: data.context_json
+            };
+
+            // Save to SQLite
+            DatabaseManager.getInstance().saveMeeting(meetingData, data.startTime, data.durationMs);
+
+            AnalyticsManager.getInstance().reportMeetingSession({
+                duration_ms: data.durationMs,
+                summary_status: 'complete',
+                metadata: {
+                    model: this.currentModel,
+                    title: title
+                }
+            }).catch(() => {});
+
+            // Notify Frontend to refresh list
+            const wins = require('electron').BrowserWindow.getAllWindows();
+            wins.forEach((w: any) => w.webContents.send('meetings-updated'));
+
+        } catch (error) {
+            console.error('[IntelligenceManager] Failed to save meeting:', error);
+        } finally {
+            // ALWAYS Notify Frontend to refresh list - even if summarized failed
+            const wins = require('electron').BrowserWindow.getAllWindows();
+            wins.forEach((w: any) => w.webContents.send('meetings-updated'));
+        }
+    }
+
+    /**
+     * Recover meetings that were started but not fully processed (e.g. app crash)
+     */
+    public async recoverUnprocessedMeetings(): Promise<void> {
+        console.log('[IntelligenceManager] Checking for unprocessed meetings...');
+        const db = DatabaseManager.getInstance();
+        const unprocessed = db.getUnprocessedMeetings();
+
+        if (unprocessed.length === 0) {
+            console.log('[IntelligenceManager] No unprocessed meetings found.');
+            return;
+        }
+
+        console.log(`[IntelligenceManager] Found ${unprocessed.length} unprocessed meetings. recovering...`);
+
+        for (const m of unprocessed) {
+            try {
+                const details = db.getMeetingDetails(m.id);
+                if (!details) continue;
+
+                console.log(`[IntelligenceManager] Recovering meeting ${m.id}...`);
+
+                // Reconstruct context from transcript
+                // Format: [SPEAKER]: text
+                const isMeetingMode = CredentialsManager.getInstance().getIsMeetingMode();
+                const context = details.transcript?.map(t => {
+                    let label = 'ASSISTANT';
+                    if (t.speaker === 'user') {
+                        label = 'YOU';
+                    } else if (t.speaker === 'interviewer') {
+                        label = isMeetingMode ? 'PERSON 1' : 'INTERVIEWER 1';
+                    }
+                    return `[${label}]: ${t.text}`;
+                }).join('\n') || "";
+
+                const parts = details.duration.split(':');
+                const durationMs = ((parseInt(parts[0]) * 60) + parseInt(parts[1])) * 1000;
+                const startTime = new Date(details.date).getTime();
+
+                const snapshot = {
+                    transcript: details.transcript as TranscriptSegment[],
+                    usage: details.usage,
+                    startTime: startTime,
+                    durationMs: durationMs,
+                    context: context,
+                    screenshots: details.screenshots || [],
+                    meetingMetadata: {
+                        title: details.title && details.title !== 'Processing...' ? details.title : undefined,
+                        calendarEventId: details.calendarEventId,
+                        source: details.source
+                    }
+                };
+
+                await this.processAndSaveMeeting(snapshot, m.id);
+                console.log(`[IntelligenceManager] Recovered meeting ${m.id}`);
+
+            } catch (e) {
+                console.error(`[IntelligenceManager] Failed to recover meeting ${m.id}`, e);
+            }
+        }
+    }
+    /**
+     * Clear all context and reset state
+     */
+    reset(): void {
+        this.contextItems = [];
+        this.fullTranscript = [];
+        this.fullUsage = [];
+        this.sessionStartTime = Date.now();
+        this.lastAssistantMessage = null;
+        this.assistantResponseHistory = []; // Reset temporal RAG history
+        this.currentMeetingMetadata = null;
+        this.currentScreenshots = [];
+        this.meetingScreenshotSessionDir = null;
+        this.activeMode = 'idle';
+        if (this.assistCancellationToken) {
+            this.assistCancellationToken.abort();
+            this.assistCancellationToken = null;
+        }
+    }
+
+    /**
+     * Reinitialize LLMs (e.g., after switching providers)
+     */
+    reinitializeLLMs(): void {
+        this.initializeLLMs();
+    }
+}

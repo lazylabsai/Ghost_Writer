@@ -1,0 +1,17 @@
+{
+    "name": "ghost-writer-audio",
+    "version": "0.1.0",
+    "main": "index.js",
+    "types": "index.d.ts",
+    "napi": {
+        "binaryName": "index",
+        "targets": [
+            "x86_64-apple-darwin",
+            "aarch64-apple-darwin",
+            "x86_64-pc-windows-msvc"
+        ]
+    },
+    "devDependencies": {
+        "@napi-rs/cli": "^2.18.4"
+    }
+}

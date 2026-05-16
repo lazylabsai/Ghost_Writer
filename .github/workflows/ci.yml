@@ -1,0 +1,70 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest]
+        node-version: [20.x]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Use Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+
+    - name: Verify package-lock.json sync
+      run: npm ci --dry-run --ignore-scripts
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Install Rust Toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: stable
+        targets: ${{ matrix.os == 'windows-latest' && 'x86_64-pc-windows-msvc' || 'aarch64-apple-darwin' }}
+
+    - name: Build Native Audio Module
+      working-directory: electron/native
+      run: npx @napi-rs/cli build --platform --release --target ${{ matrix.os == 'windows-latest' && 'x86_64-pc-windows-msvc' || 'aarch64-apple-darwin' }}
+
+    - name: Run TypeScript check
+      run: npx tsc --noEmit
+
+    - name: Run linting
+      run: npm run lint
+
+    - name: Build renderer
+      run: npm run build
+
+    - name: Build desktop application
+      run: npm run build:desktop
+
+    - name: Run prompt settings regression
+      run: npm run test:prompt-settings
+
+    - name: Run meeting summary routing regression
+      run: npm run test:meeting-summary-routing
+
+    - name: Run desktop smoke test
+      run: npm run test:smoke
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: ghost-writer-build-${{ matrix.os }}-${{ matrix.node-version }}
+        path: |
+          dist/
+          dist-electron/
