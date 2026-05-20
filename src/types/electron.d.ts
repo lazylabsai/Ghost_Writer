@@ -136,7 +136,7 @@ export interface ElectronAPI {
   onSessionReset: (callback: () => void) => () => void;
 
   // Streaming listeners
-  streamGeminiChat: (message: string, imagePath?: string, context?: string, options?: { skipSystemPrompt?: boolean }) => Promise<void>
+  streamGeminiChat: (message: string, imagePath?: string, context?: string, options?: { skipSystemPrompt?: boolean }, imagePaths?: string[]) => Promise<void>
   onGeminiStreamToken: (callback: (token: string) => void) => () => void
   onGeminiStreamDone: (callback: () => void) => () => void
   onGeminiStreamError: (callback: (error: string) => void) => () => void;
@@ -147,6 +147,7 @@ export interface ElectronAPI {
   onLicenseStatusUpdated: (callback: (state: any) => void) => () => void;
 
   onMeetingsUpdated: (callback: () => void) => () => void
+  onClickThroughChanged: (callback: (isClickThrough: boolean) => void) => () => void;
 
   // Theme API
   getThemeMode: () => Promise<{ mode: 'system' | 'light' | 'dark', resolved: 'light' | 'dark' }>

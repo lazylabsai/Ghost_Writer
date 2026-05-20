@@ -43,6 +43,28 @@ function buildGroundedChatSystemPrompt(appState: AppState): string {
   );
 }
 
+function mergeRecentTranscriptContext(context: string | undefined, recentContext: string): string | undefined {
+  const trimmedRecent = recentContext.trim();
+  if (!trimmedRecent) {
+    return context;
+  }
+
+  const recentSection = `[RECENT LIVE TRANSCRIPT]
+${trimmedRecent}
+[END RECENT LIVE TRANSCRIPT]`;
+
+  const trimmedContext = context?.trim();
+  if (!trimmedContext) {
+    return recentSection;
+  }
+
+  if (trimmedContext.includes("[RECENT LIVE TRANSCRIPT]") || trimmedContext.includes(trimmedRecent.slice(0, 200))) {
+    return trimmedContext;
+  }
+
+  return `${trimmedContext}\n\n${recentSection}`;
+}
+
 export function initializeIpcHandlers(appState: AppState): void {
   setupSystemHandlers();
   if (ipcHandlersInitialized) {
@@ -364,15 +386,26 @@ export function initializeIpcHandlers(appState: AppState): void {
     }
   })
 
-  safeIpcHandle("gemini-chat", async (event, message: string, imagePath?: string, context?: string, options?: { skipSystemPrompt?: boolean }) => {
+  safeIpcHandle("clear-llm-session-context", async () => {
+    appState.processingHelper.getLLMHelper().clearSessionContext();
+    return { success: true };
+  })
+
+  safeIpcHandle("gemini-chat", async (event, message: string, imagePath?: string, context?: string, options?: { skipSystemPrompt?: boolean }, imagePaths?: string[]) => {
     try {
       const systemPrompt = options?.skipSystemPrompt
         ? undefined
         : buildGroundedChatSystemPrompt(appState);
 
+      // Normalize imagePaths
+      const resolvedImagePaths = imagePaths && imagePaths.length > 0
+        ? imagePaths
+        : (imagePath ? [imagePath] : undefined);
+
       const result = await appState.processingHelper.getLLMHelper().chatWithGemini({
         message,
-        imagePath,
+        imagePath: resolvedImagePaths?.[0],
+        imagePaths: resolvedImagePaths,
         context,
         systemPrompt,
         options: { skipSystemPrompt: options?.skipSystemPrompt }
@@ -415,13 +448,18 @@ export function initializeIpcHandlers(appState: AppState): void {
   });
 
   // Streaming IPC Handler
-  safeIpcHandle("gemini-chat-stream", async (event, message: string, imagePath?: string, context?: string, options?: { skipSystemPrompt?: boolean }) => {
+  safeIpcHandle("gemini-chat-stream", async (event, message: string, imagePath?: string, context?: string, options?: { skipSystemPrompt?: boolean }, imagePaths?: string[]) => {
     try {
       console.log("[IPC] gemini-chat-stream started using LLMHelper.streamChat");
       const llmHelper = appState.processingHelper.getLLMHelper();
       const systemPrompt = options?.skipSystemPrompt
         ? undefined
         : buildGroundedChatSystemPrompt(appState);
+
+      // Normalize imagePaths
+      const resolvedImagePaths = imagePaths && imagePaths.length > 0
+        ? imagePaths
+        : (imagePath ? [imagePath] : undefined);
 
       // Update IntelligenceManager with USER message immediately
       const intelligenceManager = appState.getIntelligenceManager();
@@ -434,26 +472,24 @@ export function initializeIpcHandlers(appState: AppState): void {
 
       let fullResponse = "";
 
-      // Context Injection for "Answer" button (100s rolling window)
-      if (!context) {
-        // User requested 100 seconds of context for the answer button
-        // Logic: If no explicit context provided (like from manual override), auto-inject from IntelligenceManager
-        try {
-          const autoContext = intelligenceManager.getFormattedContext(100);
-          if (autoContext && autoContext.trim().length > 0) {
-            context = autoContext;
-            console.log(`[IPC] Auto-injected 100s context for gemini-chat-stream (${context.length} chars)`);
-          }
-        } catch (ctxErr) {
-          console.warn("[IPC] Failed to auto-inject context:", ctxErr);
+      // Merge the latest live transcript with any UI-provided chat context.
+      try {
+        const autoContext = intelligenceManager.getFormattedContext(100);
+        const mergedContext = mergeRecentTranscriptContext(context, autoContext);
+        if (mergedContext && mergedContext !== context) {
+          context = mergedContext;
+          console.log(`[IPC] Merged recent live transcript into gemini-chat-stream context (${context.length} chars)`);
         }
+      } catch (ctxErr) {
+        console.warn("[IPC] Failed to merge live transcript context:", ctxErr);
       }
 
       try {
         // USE streamChat which handles routing with structured payload
         const stream = llmHelper.streamChat({
           message,
-          imagePath,
+          imagePath: resolvedImagePaths?.[0],
+          imagePaths: resolvedImagePaths,
           context,
           systemPrompt,
           options: { skipSystemPrompt: options?.skipSystemPrompt }

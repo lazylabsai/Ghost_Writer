@@ -2,23 +2,16 @@
 
 ## Install issues
 
-### Windows installer fails
+### One-Command Setup fails
 
-- Re-run the PowerShell install command from the README.
-- Confirm that the release manifest and checksum files are reachable from GitHub Releases.
-- Close any running Ghost Writer process before retrying.
+- Ensure you have Node.js (v20+) and Git installed and available in your system PATH.
+- Re-run the one-command setup command from the README.
+- Check your network connection. If the `npm install` step fails, there might be a proxy or firewall blocking access to the npm registry.
 
-### macOS install fails
+### Application fails to build
 
-- Re-run the bash install command from the README.
-- Confirm you are on macOS and using a supported architecture.
-- Make sure `python3`, `curl`, `ditto`, and `shasum` are available.
-
-### Checksum mismatch
-
-- Stop immediately and do not run the installer payload.
-- Download the release again.
-- Compare the file hash against the published `checksums.txt`.
+- If `npm run build:desktop` fails, make sure your build tools are installed. On Windows, you might need to run `npm install -g windows-build-tools` or install Visual Studio Build Tools if native modules fail to compile.
+- Ensure you have enough disk space available.
 
 ## Runtime issues
 
@@ -26,11 +19,10 @@
 
 Full Privacy Mode requires:
 
-- Local Whisper runtime
-- Local Whisper model
-- Ollama running locally
-- At least one local text model
-- A local vision-capable model if you want screenshot analysis
+- Local Whisper runtime and model configured.
+- Ollama running locally.
+- At least one local text model pulled in Ollama (e.g., `ollama run qwen2.5:7b`).
+- A local vision-capable model if you want screenshot analysis (e.g., `ollama run llava`).
 
 ### No cloud responses
 
@@ -38,10 +30,12 @@ Full Privacy Mode requires:
 - Confirm Full Privacy Mode is disabled if you want to use cloud providers.
 - Review the active model selection in AI Models settings.
 
-### Installer completed but app is missing
+### Where is the app installed?
 
-- Windows default path: `%LOCALAPPDATA%\Programs\Ghost Writer`
-- macOS default path: `~/Applications/Ghost Writer.app`
+- The one-command setup scripts clone the repository to:
+  - Windows: `~\Desktop\Ghost_Writer`
+  - macOS: `~/Desktop/Ghost_Writer`
+- You must launch it via terminal using `npm start` from inside that directory.
 
 ## Remote Display issues
 
@@ -66,4 +60,4 @@ Full Privacy Mode requires:
 ## Logs and support
 
 - Use the app’s support and troubleshooting surfaces first.
-- File issues at [GitHub Issues](https://github.com/Sasidhar-7302/Ghost_Writer/issues).
+- File issues at [GitHub Issues](https://github.com/lazylabsai/Ghost_Writer/issues).

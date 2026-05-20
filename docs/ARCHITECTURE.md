@@ -110,6 +110,9 @@ Transcript → Intent Classifier → Prompt Builder → LLM Call → Post-Proces
 - **IntentClassifier** — Categorizes questions (technical, behavioral, situational, leadership)
 - **TemporalContextBuilder** — Prevents answer repetition by tracking recent responses
 - **Prompt System** — Dynamic prompts with persona, resume context, and conversation history
+- **Screenshot Session Context** — `ScreenshotSessionContext` caches the latest OCR text, assistant answer, and generated code for `LLMHelper` so follow-up prompts like "validate previous code" can work after a model switch without re-sending images.
+- **Fast Local Ollama Defaults** - `OllamaProvider` disables thinking output for local thinking model families such as `qwen3.5` and `gemma4`, and uses a lower default temperature for faster, more deterministic coding and MCQ answers.
+- **Recent Live Transcript Merge** — Streaming chat requests merge the last 100 seconds of live transcript with UI-provided chat context, preserving meeting context even when the renderer sends its own conversation history.
 - **PostProcessor** — Strips AI artifacts, meta-commentary, and formats responses
 - **TranscriptCleaner** — Normalizes raw whisper output
 

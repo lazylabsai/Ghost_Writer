@@ -145,6 +145,15 @@ export class ShortcutsHelper {
     });
 
     registerShortcut({
+      accelerator: "CommandOrControl+M",
+      handler: () => {
+        const isClickThrough = this.appState.getWindowHelper().toggleClickThrough();
+        console.log(`[Shortcuts] Click-through mode: ${isClickThrough ? 'Enabled' : 'Disabled'}`);
+      },
+      label: "toggle click-through",
+    });
+
+    registerShortcut({
       accelerator: "F8",
       handler: async () => {
         await this.handleQuickAnswer();

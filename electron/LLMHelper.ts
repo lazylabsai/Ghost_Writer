@@ -7,13 +7,14 @@ import fs from "fs";
 import path from "path";
 
 import { GeminiProvider } from "./llm/providers/GeminiProvider";
-import { OllamaProvider } from "./llm/providers/OllamaProvider";
+import { OllamaProvider, isLikelyVisionModelName } from "./llm/providers/OllamaProvider";
 import { OpenAICompatProvider } from "./llm/providers/OpenAICompatProvider";
 import { ClaudeProvider } from "./llm/providers/ClaudeProvider";
 import { GroqProvider } from "./llm/providers/GroqProvider";
 import { CustomCurlProvider } from "./llm/providers/CustomCurlProvider";
 import { ILLMProvider, ChatPayload, estimateTokens } from "./llm/providers/ILLMProvider";
 import { AnalyticsManager } from "./services/AnalyticsManager";
+import { ScreenshotSessionContext } from "./llm/ScreenshotSessionContext";
 
 import { extractFromCommonFormats } from "./llm/providers/CustomCurlProvider";
 
@@ -44,6 +45,7 @@ const GROQ_MODEL = "llama-3.3-70b-versatile";
 // Let the provider handle its own config, orchestrator shouldn't hardcode if possible
 // We keep it for the OpenAI/Claude instances for now
 const MAX_OUTPUT_TOKENS = 8192;
+const SCREENSHOT_VISION_PROXY_TIMEOUT_MS = 20000;
 
 type PreparedChatPayload = {
   payload: ChatPayload;
@@ -84,6 +86,7 @@ export class LLMHelper extends EventEmitter {
 
   private customProvider: CustomProvider | null = null;
   private airGapMode: boolean = false;
+  private screenshotSessionContext = new ScreenshotSessionContext();
 
   constructor(apiKey: string = "") {
     super()
@@ -392,13 +395,8 @@ export class LLMHelper extends EventEmitter {
     return context ? `${context}\n\n${note}` : note;
   }
 
-  private buildMessageWithOCR(message: string, ocrText?: string): string {
-    const normalizedOCR = ocrText?.trim();
-    if (!normalizedOCR) {
-      return message;
-    }
-
-    return `${message}\n\nSCREENSHOT OCR:\n${normalizedOCR}`;
+  public clearSessionContext(): void {
+    this.screenshotSessionContext.clear();
   }
 
   private appendAttachmentSourceRule(systemPrompt: string | undefined, imagePath?: string): string | undefined {
@@ -436,19 +434,19 @@ export class LLMHelper extends EventEmitter {
           return true;
         })
         .sort((a, b) => {
-          // Priority A: Cloud models (unless in privacy mode)
-          if (!isPrivacyActive) {
-            if (a.isCloud && !b.isCloud) return -1;
-            if (!a.isCloud && b.isCloud) return 1;
-          }
+          // Prefer local Ollama vision models; native cloud providers are handled above.
+          if (a.isCloud && !b.isCloud) return 1;
+          if (!a.isCloud && b.isCloud) return -1;
 
           // Priority B: Small/Fast models (heuristics)
-          const speedPriority = ['moondream', 'llava', 'qwen:4b', 'qwen:7b', 'qwen2:7b', 'phi3'];
+          const speedPriority = ['moondream', 'llava', 'qwen:4b', 'qwen:7b', 'qwen2:7b', 'qwen3.5:4b', 'qwen3.5:9b', 'qwen3.6', 'gemma4:e4b', 'gemma4'];
           const getScore = (name: string) => {
             const index = speedPriority.findIndex(p => name.toLowerCase().includes(p));
             return index === -1 ? 100 : index;
           };
-          return getScore(a.name) - getScore(b.name);
+          const scoreDiff = getScore(a.name) - getScore(b.name);
+          if (scoreDiff !== 0) return scoreDiff;
+          return (a.size ?? Number.MAX_SAFE_INTEGER) - (b.size ?? Number.MAX_SAFE_INTEGER);
         });
 
       if (sortedModels.length > 0) {
@@ -474,11 +472,15 @@ Focus on:
 Provide a comprehensive, objective description that will allow a text-only LLM to understand the visual context perfectly. 
 Be literal and detailed. Do NOT include any filler, meta-talk, or advice. Just describe the visual reality.`;
 
-    const description = await helper.generate({
-      message: proxyPrompt,
-      imagePath: imagePath,
-      options: { skipSystemPrompt: true }
-    });
+    const description = await this.withTimeout(
+      helper.generate({
+        message: proxyPrompt,
+        imagePath: imagePath,
+        options: { skipSystemPrompt: true }
+      }),
+      SCREENSHOT_VISION_PROXY_TIMEOUT_MS,
+      "Screenshot vision analysis"
+    );
 
     if (!description || description.length < 10) {
       throw new Error(`Vision helper ${helper.name} returned an empty or invalid description.`);
@@ -495,7 +497,7 @@ Be literal and detailed. Do NOT include any filler, meta-talk, or advice. Just d
     return this.generateVisualDescriptionFromHelper(helper, imagePath);
   }
 
-  private isProviderMultimodal(): boolean {
+  private async isProviderMultimodal(): Promise<boolean> {
     const modelId = (this.currentModelId || "").toLowerCase();
     
     // Explicit blacklist for known text-only models (even if they have multimodal APIs)
@@ -514,14 +516,8 @@ Be literal and detailed. Do NOT include any filler, meta-talk, or advice. Just d
     }
 
     if (this.useOllama) {
-      const lower = this.ollamaModel.toLowerCase();
-      return (
-        lower.includes("llava") ||
-        lower.includes("v") ||
-        lower.includes("vision") ||
-        lower.includes("qwen2") ||
-        lower.includes("qwen3")
-      );
+      const provider = new OllamaProvider(this.ollamaUrl, this.ollamaModel);
+      return provider.modelSupportsVision(this.ollamaModel);
     }
 
     if (this.customProvider) {
@@ -543,30 +539,53 @@ Be literal and detailed. Do NOT include any filler, meta-talk, or advice. Just d
       OPENAI_MODEL,
       CLAUDE_MODEL,
     ];
-    return multimodalIds.includes(this.currentModelId);
+    if (multimodalIds.includes(this.currentModelId)) {
+      return true;
+    }
+    if (this.currentModelId && isLikelyVisionModelName(this.currentModelId)) {
+      return true;
+    }
+    return false;
   }
 
   private async preparePayload(payload: ChatPayload): Promise<PreparedChatPayload> {
-    const normalizedPayload: ChatPayload = {
+    const normalizedPayload = this.screenshotSessionContext.applyPreviousWorkContext({
       ...payload,
       message: payload.message,
       context: payload.context,
       systemPrompt: payload.systemPrompt,
-    };
+    });
 
-    if (!payload.imagePath) {
+    // Normalize: merge imagePath and imagePaths into a single array
+    let allImagePaths: string[] = [];
+    if (payload.imagePaths && payload.imagePaths.length > 0) {
+      allImagePaths = [...payload.imagePaths];
+    } else if (payload.imagePath) {
+      allImagePaths = [payload.imagePath];
+    }
+
+    if (allImagePaths.length === 0) {
       return { payload: normalizedPayload, cleanupPaths: [] };
     }
 
-    if (!fs.existsSync(payload.imagePath)) {
-      console.warn(`[LLMHelper] Attached image not found: ${payload.imagePath}`);
+    // Filter to only images that exist on disk
+    const existingPaths = allImagePaths.filter(p => {
+      if (!fs.existsSync(p)) {
+        console.warn(`[LLMHelper] Attached image not found: ${p}`);
+        return false;
+      }
+      return true;
+    });
+
+    if (existingPaths.length === 0) {
       return {
         payload: {
           ...normalizedPayload,
           imagePath: undefined,
+          imagePaths: undefined,
           context: this.appendContextNote(
             payload.context,
-            `Image attachment unavailable: ${path.basename(payload.imagePath)} was not found on disk.`
+            `Image attachment(s) unavailable: file(s) not found on disk.`
           ),
         },
         cleanupPaths: [],
@@ -575,45 +594,94 @@ Be literal and detailed. Do NOT include any filler, meta-talk, or advice. Just d
 
     try {
       const multimodal = MultimodalHelper.getInstance();
-      const processed = await multimodal.prepareImage(payload.imagePath, { 
-        runOCR: true,
-        ocrTimeoutMs: 5000 // Cap OCR at 5s to keep things "instant"
-      });
-      const cleanupPaths =
-        processed.metadata.temporary && processed.processedPath !== payload.imagePath
-          ? [processed.processedPath]
-          : [];
+      const cleanupPaths: string[] = [];
+      const processedPaths: string[] = [];
+      const allOcrTexts: string[] = [];
 
-      console.log(
-        `[LLMHelper] Prepared image ${path.basename(payload.imagePath)} -> ${path.basename(processed.processedPath)} (ocr=${processed.metadata.usedOCR}, size=${processed.metadata.processedSize})`
-      );
+      // Process each image
+      for (const imgPath of existingPaths) {
+        const processed = await multimodal.prepareImage(imgPath, {
+          runOCR: true,
+          ocrTimeoutMs: 5000
+        });
 
-      let finalPayload = {
+        if (processed.metadata.temporary && processed.processedPath !== imgPath) {
+          cleanupPaths.push(processed.processedPath);
+        }
+
+        processedPaths.push(processed.processedPath);
+
+        if (processed.ocrText) {
+          allOcrTexts.push(processed.ocrText);
+        }
+
+        console.log(
+          `[LLMHelper] Prepared image ${path.basename(imgPath)} -> ${path.basename(processed.processedPath)} (ocr=${processed.metadata.usedOCR}, size=${processed.metadata.processedSize})`
+        );
+      }
+
+      // Merge OCR text from all images
+      const mergedOcrText = allOcrTexts.length > 0
+        ? (allOcrTexts.length === 1
+          ? allOcrTexts[0]
+          : allOcrTexts.map((t, i) => `[Image ${i + 1}]\n${t}`).join('\n\n'))
+        : undefined;
+      this.screenshotSessionContext.rememberScreenshotOCR(mergedOcrText, payload.message, processedPaths.length);
+
+      let finalPayload: ChatPayload = {
         ...normalizedPayload,
-        imagePath: processed.processedPath,
-        message: this.buildMessageWithOCR(payload.message, processed.ocrText),
+        imagePath: processedPaths[0], // First image for backwards compat
+        imagePaths: processedPaths,   // All images for multi-image providers
+        message: this.screenshotSessionContext.buildMessageWithOCR(payload.message, mergedOcrText),
       };
 
       // --- VISION GATEWAY PROXY LOGIC ---
-      if (!this.isProviderMultimodal()) {
-        try {
-          const visualDescription = await this.generateVisualDescription(processed.processedPath);
-          const formattedContext = `
-[VISUAL ANALYSIS OF ATTACHED SCREENSHOT]
-This is what I can see in the screenshot you shared:
-${visualDescription}
-[END VISUAL ANALYSIS]`;
-          
+      if (!(await this.isProviderMultimodal())) {
+        if (this.screenshotSessionContext.hasUsefulOCRText(mergedOcrText)) {
           finalPayload.context = this.appendContextNote(
             finalPayload.context,
-            formattedContext
+            `[SCREENSHOT PROCESSING]
+Readable screenshot text was extracted with OCR and will be used as the primary screenshot source.`
           );
-          // Strip imagePath so text-only provider doesn't attempt native multimodal
           finalPayload.imagePath = undefined;
-          console.log(`[VisionGateway] Successfully injected visual context into primary text-only model. Model ID: ${this.currentModelId}`);
-        } catch (proxyError: any) {
-          console.warn(`[VisionGateway] Proxy analysis failed:`, proxyError.message);
-          // Continue with text-only, at least OCR might be present
+          finalPayload.imagePaths = undefined;
+          console.log(`[LLMHelper] OCR fast path: using extracted text for ${processedPaths.length} image(s), skipping vision proxy for text-only model ${this.currentModelId}.`);
+        } else {
+          try {
+            // Generate visual descriptions for ALL images
+            const descriptions: string[] = [];
+            for (let i = 0; i < processedPaths.length; i++) {
+              const visualDescription = await this.generateVisualDescription(processedPaths[i]);
+              descriptions.push(processedPaths.length > 1
+                ? `[Image ${i + 1}]\n${visualDescription}`
+                : visualDescription);
+            }
+
+            const formattedContext = `
+[VISUAL ANALYSIS OF ATTACHED SCREENSHOT${processedPaths.length > 1 ? 'S' : ''}]
+This is what I can see in the screenshot${processedPaths.length > 1 ? 's' : ''} you shared:
+${descriptions.join('\n\n')}
+[END VISUAL ANALYSIS]`;
+          
+            finalPayload.context = this.appendContextNote(
+              finalPayload.context,
+              formattedContext
+            );
+            // Strip image paths so text-only provider doesn't attempt native multimodal
+            finalPayload.imagePath = undefined;
+            finalPayload.imagePaths = undefined;
+            console.log(`[VisionGateway] Successfully injected visual context for ${processedPaths.length} image(s) into primary text-only model. Model ID: ${this.currentModelId}`);
+          } catch (proxyError: any) {
+            console.warn(`[VisionGateway] Proxy analysis failed:`, proxyError.message);
+            finalPayload.context = this.appendContextNote(
+              finalPayload.context,
+              `[SCREENSHOT PROCESSING]
+The attached screenshot could not be analyzed visually by the available vision helper. Answer from the user's text and any OCR text that was extracted; ask for a clearer screenshot only if required details are missing.`
+            );
+            finalPayload.imagePath = undefined;
+            finalPayload.imagePaths = undefined;
+            console.log(`[VisionGateway] Falling back to OCR/text-only route for ${processedPaths.length} image(s).`);
+          }
         }
       }
 
@@ -622,8 +690,15 @@ ${visualDescription}
         cleanupPaths,
       };
     } catch (error) {
-      console.warn("[LLMHelper] Image preprocessing failed, using original image:", error);
-      return { payload: normalizedPayload, cleanupPaths: [] };
+      console.warn("[LLMHelper] Image preprocessing failed, using original images:", error);
+      return {
+        payload: {
+          ...normalizedPayload,
+          imagePath: existingPaths[0],
+          imagePaths: existingPaths,
+        },
+        cleanupPaths: [],
+      };
     }
   }
 
@@ -1102,7 +1177,9 @@ ${visualDescription}
 
     const processProviderResponse = async (request: Promise<string>): Promise<string> => {
       const response = await request;
-      return this.processResponse(response);
+      const processed = this.processResponse(response);
+      this.screenshotSessionContext.rememberAssistantResponse(processed, this.getCurrentModel());
+      return processed;
     };
 
     try {
@@ -1218,7 +1295,9 @@ ${visualDescription}
           try {
             const rawResponse = await provider.execute();
             if (rawResponse && rawResponse.trim().length > 0) {
-              return this.processResponse(rawResponse);
+              const processed = this.processResponse(rawResponse);
+              this.screenshotSessionContext.rememberAssistantResponse(processed, this.getCurrentModel());
+              return processed;
             }
           } catch {
             // Try the next provider in the rotation.
@@ -1244,7 +1323,7 @@ ${visualDescription}
 
   public async * streamChatWithGemini(payload: ChatPayload): AsyncGenerator<string, void, unknown> {
     const { payload: preparedPayload, cleanupPaths } = await this.preparePayload(payload);
-    const isMultimodal = !!preparedPayload.imagePath;
+    const isMultimodal = !!preparedPayload.imagePath || (preparedPayload.imagePaths && preparedPayload.imagePaths.length > 0);
 
     const geminiPayload = this.buildProviderPayload(preparedPayload, UNIVERSAL_SYSTEM_PROMPT);
     const groqPayload = this.buildProviderPayload(preparedPayload, UNIVERSAL_SYSTEM_PROMPT, {
@@ -1342,7 +1421,12 @@ ${visualDescription}
     }
 
     const startedAt = Date.now();
-    yield* this.streamChatWithGemini(payload);
+    let fullResponse = "";
+    for await (const chunk of this.streamChatWithGemini(payload)) {
+      fullResponse += chunk;
+      yield chunk;
+    }
+    this.screenshotSessionContext.rememberAssistantResponse(this.processResponse(fullResponse), this.getCurrentModel());
     console.log(`[LLMHelper] streamChat completed via ${this.getCurrentProvider()} in ${Date.now() - startedAt}ms`);
   }
 

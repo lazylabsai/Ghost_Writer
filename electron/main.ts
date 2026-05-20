@@ -773,6 +773,7 @@ export class AppState {
     // Track meeting start
     const mode = this.credentialsManager.getIsMeetingMode() ? 'meeting' : 'interview';
     this.analyticsManager.onMeetingStarted(mode);
+    this.processingHelper.getLLMHelper().clearSessionContext();
 
     // Emit session reset to clear UI state
     this.getWindowHelper().getOverlayWindow()?.webContents.send('session-reset');
@@ -1163,8 +1164,8 @@ export class AppState {
 
       return screenshotPath
     } finally {
-      // Restore capture visibility
-      this.windowHelper.setContentProtection(false)
+      // Restore capture visibility — respect ghost mode state
+      this.windowHelper.setContentProtection(this.isUndetectable)
     }
   }
 
@@ -1196,8 +1197,8 @@ export class AppState {
 
       return screenshotPath
     } finally {
-      // Restore capture visibility
-      this.windowHelper.setContentProtection(false)
+      // Restore capture visibility — respect ghost mode state
+      this.windowHelper.setContentProtection(this.isUndetectable)
     }
   }
 

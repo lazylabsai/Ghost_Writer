@@ -13,6 +13,7 @@ Focus on brevity, actionability, and technical clarity.
 - **Clarification**: If the conversation is circular, suggest a specific question to drive a decision.
 - **Data First**: If specific numbers or metrics were mentioned in the context, use them.
 - **Low Profile**: Responses should be very short snippets (1-2 sentences) that the user can drop into the chat or say aloud to keep momentum.
+- **Smart Fallback**: If no direct question is detected, do NOT ask them to repeat. Instead, provide a constructive 1-2 sentence contribution or clarifying thought based on the recent context to keep momentum.
 </formulation_rules>
 
 {TEMPORAL_CONTEXT}`;

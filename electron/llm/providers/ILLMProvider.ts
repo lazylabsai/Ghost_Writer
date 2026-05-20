@@ -7,6 +7,7 @@ export interface ChatPayload {
     message: string;
     systemPrompt?: string;
     imagePath?: string;
+    imagePaths?: string[];
     context?: string;
     options?: {
         temperature?: number;

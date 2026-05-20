@@ -117,6 +117,8 @@ interface Message {
     isStreaming?: boolean;
     hasScreenshot?: boolean;
     screenshotPreview?: string;
+    screenshotPreviews?: string[];
+    screenshotCount?: number;
     isCode?: boolean;
     intent?: string;
     model?: string;
@@ -186,10 +188,12 @@ const GhostWriterInterface: React.FC<GhostWriterInterfaceProps> = ({ onEndMeetin
     const contentRef = useRef<HTMLDivElement>(null);
     // const settingsButtonRef = useRef<HTMLButtonElement>(null);
 
-    // Latent Context State (Screenshot attached but not sent)
-    const [attachedContext, setAttachedContext] = useState<{ path: string, preview: string } | null>(null);
+    // Latent Context State (Screenshots attached but not sent) — up to 5
+    const MAX_ATTACHED_IMAGES = 5;
+    const [attachedContext, setAttachedContext] = useState<Array<{ path: string, preview: string }>>([]);
 
     // Settings State with Persistence
+    const [isClickThrough, setIsClickThrough] = useState(false);
     const [isUndetectable, setIsUndetectable] = useState(false);
     const [hideChatHidesWidget, setHideChatHidesWidget] = useState(() => {
         const stored = localStorage.getItem('ghost_writer_hideChatHidesWidget');
@@ -257,6 +261,15 @@ const GhostWriterInterface: React.FC<GhostWriterInterfaceProps> = ({ onEndMeetin
             });
             return () => unsubscribe();
         }
+    }, []);
+
+    // Listen for click-through mode changes
+    useEffect(() => {
+        if (!window.electronAPI?.onClickThroughChanged) return;
+        const unsubscribe = window.electronAPI.onClickThroughChanged((state) => {
+            setIsClickThrough(state);
+        });
+        return () => unsubscribe();
     }, []);
 
     // Persist Settings
@@ -378,7 +391,7 @@ const GhostWriterInterface: React.FC<GhostWriterInterfaceProps> = ({ onEndMeetin
             console.log('[GhostWriterInterface] Resetting session state...');
             setMessages([]);
             setInputValue('');
-            setAttachedContext(null);
+            setAttachedContext([]);
             setManualTranscript('');
             setVoiceInput('');
             setIsProcessing(false);
@@ -757,11 +770,17 @@ const GhostWriterInterface: React.FC<GhostWriterInterfaceProps> = ({ onEndMeetin
 
 
 
-        // Screenshot taken - attach for later use
+        // Screenshot taken - attach for later use (up to MAX_ATTACHED_IMAGES)
         cleanups.push(window.electronAPI.onScreenshotTaken(async (data) => {
             console.log('[GhostWriterInterface] Screenshot taken event received:', data.path);
             setIsExpanded(true);
-            setAttachedContext(data);
+            setAttachedContext(prev => {
+                if (prev.length >= MAX_ATTACHED_IMAGES) {
+                    console.warn(`[GhostWriterInterface] Max ${MAX_ATTACHED_IMAGES} images reached, replacing oldest`);
+                    return [...prev.slice(1), data];
+                }
+                return [...prev, data];
+            });
             analytics.trackCommandExecuted('screenshot_attached');
 
             // Auto-focus input for immediate typing
@@ -776,8 +795,12 @@ const GhostWriterInterface: React.FC<GhostWriterInterfaceProps> = ({ onEndMeetin
         if (window.electronAPI.onScreenshotAttached) {
             cleanups.push(window.electronAPI.onScreenshotAttached((data) => {
                 setIsExpanded(true);
-                setAttachedContext(data);
-                // toast/notification could go here
+                setAttachedContext(prev => {
+                    if (prev.length >= MAX_ATTACHED_IMAGES) {
+                        return [...prev.slice(1), data];
+                    }
+                    return [...prev, data];
+                });
             }));
         }
 
@@ -798,24 +821,26 @@ const GhostWriterInterface: React.FC<GhostWriterInterfaceProps> = ({ onEndMeetin
         analytics.trackCommandExecuted('what_to_say');
 
         // Use attached image context if present
-        const currentAttachment = attachedContext;
-        if (currentAttachment) {
-            setAttachedContext(null);
+        const currentAttachments = attachedContext;
+        if (currentAttachments.length > 0) {
+            setAttachedContext([]);
         }
         
-        if (currentAttachment) {
+        if (currentAttachments.length > 0) {
             setMessages(prev => [...prev, {
                 id: Date.now().toString(),
                 role: 'user',
                 text: 'What should I say about this?',
                 hasScreenshot: true,
-                screenshotPreview: currentAttachment.preview
+                screenshotPreview: currentAttachments[0].preview,
+                screenshotPreviews: currentAttachments.map(a => a.preview),
+                screenshotCount: currentAttachments.length
             }]);
         }
 
         try {
-            // Pass imagePath if attached
-            await window.electronAPI.generateWhatToSay(undefined, currentAttachment?.path);
+            // Pass first imagePath for this action
+            await window.electronAPI.generateWhatToSay(undefined, currentAttachments[0]?.path);
         } catch (err) {
             setMessages(prev => [...prev, {
                 id: Date.now().toString(),
@@ -833,7 +858,7 @@ const GhostWriterInterface: React.FC<GhostWriterInterfaceProps> = ({ onEndMeetin
         analytics.trackCommandExecuted('follow_up_' + intent);
 
         try {
-            await window.electronAPI.generateFollowUp(intent, undefined, attachedContext?.path);
+            await window.electronAPI.generateFollowUp(intent, undefined, attachedContext[0]?.path);
         } catch (err) {
             setMessages(prev => [...prev, {
                 id: Date.now().toString(),
@@ -869,7 +894,7 @@ const GhostWriterInterface: React.FC<GhostWriterInterfaceProps> = ({ onEndMeetin
         analytics.trackCommandExecuted('suggest_questions');
 
         try {
-            await window.electronAPI.generateFollowUpQuestions(attachedContext?.path);
+            await window.electronAPI.generateFollowUpQuestions(attachedContext[0]?.path);
         } catch (err) {
             setMessages(prev => [...prev, {
                 id: Date.now().toString(),
@@ -994,7 +1019,7 @@ const GhostWriterInterface: React.FC<GhostWriterInterfaceProps> = ({ onEndMeetin
             setIsManualRecording(false);
             setManualTranscript('');  // Clear live preview
             
-            const currentAttachment = attachedContext;
+            const currentAttachments = attachedContext;
 
             // Wait briefly for in-flight whisper chunks to arrive
             await new Promise(r => setTimeout(r, 600));
@@ -1010,11 +1035,11 @@ const GhostWriterInterface: React.FC<GhostWriterInterfaceProps> = ({ onEndMeetin
             voiceInputRef.current = '';
 
             // Clear context immediately for instant UI feedback
-            if (currentAttachment) {
-                setAttachedContext(null);
+            if (currentAttachments.length > 0) {
+                setAttachedContext([]);
             }
 
-            if (!question && !currentAttachment) {
+            if (!question && currentAttachments.length === 0) {
                 // No voice input and no image
                 setMessages(prev => [...prev, {
                     id: Date.now().toString(),
@@ -1029,8 +1054,10 @@ const GhostWriterInterface: React.FC<GhostWriterInterfaceProps> = ({ onEndMeetin
                 id: Date.now().toString(),
                 role: 'user',
                 text: question,
-                hasScreenshot: !!currentAttachment,
-                screenshotPreview: currentAttachment?.preview
+                hasScreenshot: currentAttachments.length > 0,
+                screenshotPreview: currentAttachments[0]?.preview,
+                screenshotPreviews: currentAttachments.map(a => a.preview),
+                screenshotCount: currentAttachments.length
             }]);
 
             // Add placeholder for streaming response
@@ -1047,7 +1074,7 @@ const GhostWriterInterface: React.FC<GhostWriterInterfaceProps> = ({ onEndMeetin
             try {
                 let prompt = '';
 
-                if (currentAttachment) {
+                if (currentAttachments.length > 0) {
                     // Image + Voice Context
                     prompt = `You are a helper. The user has provided a screenshot and a spoken question/command.
 User said: "${question}"
@@ -1072,7 +1099,13 @@ Provide only the answer, nothing else.`;
 
                 // Call Streaming API: message = question, context = instructions
                 requestStartTimeRef.current = Date.now();
-                await window.electronAPI.streamGeminiChat(question, currentAttachment?.path, prompt, { skipSystemPrompt: true });
+                await window.electronAPI.streamGeminiChat(
+                    question,
+                    currentAttachments[0]?.path,
+                    prompt,
+                    { skipSystemPrompt: true },
+                    currentAttachments.length > 0 ? currentAttachments.map(a => a.path) : undefined
+                );
 
             } catch (err) {
                 // Initial invocation failing (e.g. IPC error before stream starts)
@@ -1114,10 +1147,10 @@ Provide only the answer, nothing else.`;
     };
 
     const handleManualSubmit = async () => {
-        if (!inputValue.trim() && !attachedContext) return;
+        if (!inputValue.trim() && attachedContext.length === 0) return;
 
         const userText = inputValue;
-        const currentAttachment = attachedContext;
+        const currentAttachments = attachedContext;
 
         // Clear text input immediately, but preserve attached screenshot for threaded follow-up questions
         setInputValue('');
@@ -1125,9 +1158,11 @@ Provide only the answer, nothing else.`;
         setMessages(prev => [...prev, {
             id: Date.now().toString(),
             role: 'user',
-            text: userText || (currentAttachment ? 'Analyze this screenshot' : ''),
-            hasScreenshot: !!currentAttachment,
-            screenshotPreview: currentAttachment?.preview
+            text: userText || (currentAttachments.length > 0 ? `Analyze ${currentAttachments.length > 1 ? 'these screenshots' : 'this screenshot'}` : ''),
+            hasScreenshot: currentAttachments.length > 0,
+            screenshotPreview: currentAttachments[0]?.preview,
+            screenshotPreviews: currentAttachments.map(a => a.preview),
+            screenshotCount: currentAttachments.length
         }]);
 
         // Add placeholder for streaming response
@@ -1143,17 +1178,19 @@ Provide only the answer, nothing else.`;
         setIsProcessing(true);
 
         // Clear context immediately for instant UI feedback
-        if (currentAttachment) {
-            setAttachedContext(null);
+        if (currentAttachments.length > 0) {
+            setAttachedContext([]);
         }
 
         try {
             // Pass imagePath if attached, AND conversation context
             requestStartTimeRef.current = Date.now();
             await window.electronAPI.streamGeminiChat(
-                userText || 'Analyze this screenshot',
-                currentAttachment?.path,
-                conversationContext // Pass context so "answer this" works
+                userText || (currentAttachments.length > 1 ? 'Analyze these screenshots' : 'Analyze this screenshot'),
+                currentAttachments[0]?.path,
+                conversationContext, // Pass context so "answer this" works
+                undefined,
+                currentAttachments.length > 0 ? currentAttachments.map(a => a.path) : undefined
             );
         } catch (err) {
             setIsProcessing(false);
@@ -1178,33 +1215,40 @@ Provide only the answer, nothing else.`;
 
     const clearChat = () => {
         setMessages([]);
+        window.electronAPI.invoke('clear-llm-session-context').catch((err: any) => {
+            console.warn('Failed to clear LLM session context:', err);
+        });
     };
 
 
 
 
     const renderMessageText = (msg: Message) => {
-        // Base rendering for any message that has a screenshot
-        const screenshotPreview = msg.hasScreenshot && msg.screenshotPreview ? (
-            <div className="mb-4 group/img relative">
-                <div className="
-                    relative rounded-[16px] overflow-hidden 
-                    border border-white/20 shadow-xl shadow-black/20 
-                    w-fit max-w-[280px] transition-all duration-300
-                    hover:border-white/40 hover:shadow-white/5
-                    interaction-base
-                ">
-                    <img 
-                        src={msg.screenshotPreview} 
-                        alt="Attached screenshot" 
-                        className="w-full h-auto object-contain block" 
-                    />
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent pointer-events-none" />
-                </div>
-                {/* Visual Label */}
-                <div className="absolute -bottom-1 -right-1 bg-[#1E1E1E] border border-white/10 rounded-full p-1 shadow-lg opacity-0 group-hover/img:opacity-100 transition-opacity">
-                    <Image className="w-3 h-3 text-slate-400" />
-                </div>
+        // Base rendering for any message that has screenshots
+        const previewsToRender = msg.screenshotPreviews && msg.screenshotPreviews.length > 0
+            ? msg.screenshotPreviews
+            : (msg.screenshotPreview ? [msg.screenshotPreview] : []);
+
+        const screenshotPreview = previewsToRender.length > 0 ? (
+            <div className="mb-4 flex flex-wrap gap-2.5">
+                {previewsToRender.map((previewUrl, idx) => (
+                    <div key={idx} className="group/img relative">
+                        <div className="
+                            relative rounded-[12px] overflow-hidden 
+                            border border-white/20 shadow-xl shadow-black/20 
+                            w-fit max-w-[180px] transition-all duration-300
+                            hover:border-white/40 hover:shadow-white/5
+                            interaction-base
+                        ">
+                            <img 
+                                src={previewUrl} 
+                                alt={`Attached screenshot ${idx + 1}`} 
+                                className="w-full h-auto max-h-[120px] object-cover block" 
+                            />
+                            <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent pointer-events-none" />
+                        </div>
+                    </div>
+                ))}
             </div>
         ) : null;
 
@@ -1483,7 +1527,22 @@ Provide only the answer, nothing else.`;
     };
 
     return (
-        <div ref={contentRef} className="flex flex-col items-center w-fit mx-auto h-fit min-h-0 bg-transparent p-0 rounded-[24px] font-sans text-slate-200 gap-2">
+        <div ref={contentRef} className={`flex flex-col items-center w-fit mx-auto h-fit min-h-0 bg-transparent p-0 rounded-[24px] font-sans text-slate-200 gap-2 transition-all duration-300 ${isClickThrough ? 'ring-2 ring-yellow-400 ring-offset-2 ring-offset-black/50 pointer-events-none' : ''}`}>
+            
+            {/* Click-Through Mode Badge */}
+            <AnimatePresence>
+                {isClickThrough && (
+                    <motion.div
+                        initial={{ opacity: 0, y: -10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -10 }}
+                        className="absolute -top-10 left-1/2 -translate-x-1/2 bg-yellow-400/90 backdrop-blur-md text-black px-3 py-1.5 rounded-full text-[11px] font-bold uppercase tracking-widest shadow-xl shadow-yellow-400/20 z-50 flex items-center gap-1.5"
+                    >
+                        <Zap className="w-3.5 h-3.5" />
+                        Click-Through Active (Ctrl+M)
+                    </motion.div>
+                )}
+            </AnimatePresence>
 
             <TopPill
                 expanded={isExpanded}
@@ -1669,7 +1728,7 @@ Provide only the answer, nothing else.`;
 
                             {/* Quick Actions - Full width below split panels */}
                             <div className={`flex flex-nowrap justify-center items-center gap-1.5 px-4 pb-3 pt-3 border-t border-white/5`}>
-                                <button onClick={handleWhatToSay} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-medium text-slate-400 bg-white/5 border border-white/0 hover:text-slate-200 hover:bg-white/10 hover:border-white/5 transition-all active:scale-95 duration-200 interaction-base interaction-press whitespace-nowrap shrink-0">
+                                <button title="Shortcut: Ctrl+J" onClick={handleWhatToSay} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-medium text-slate-400 bg-white/5 border border-white/0 hover:text-slate-200 hover:bg-white/10 hover:border-white/5 transition-all active:scale-95 duration-200 interaction-base interaction-press whitespace-nowrap shrink-0">
                                     <Pencil className="w-3 h-3 opacity-70" /> What to answer?
                                 </button>
                                 <button onClick={() => handleFollowUp('shorten')} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-medium text-slate-400 bg-white/5 border border-white/0 hover:text-slate-200 hover:bg-white/10 hover:border-white/5 transition-all active:scale-95 duration-200 interaction-base interaction-press whitespace-nowrap shrink-0">
@@ -1704,42 +1763,49 @@ Provide only the answer, nothing else.`;
                                 <div className="relative group">
                                     {/* Latent Context Preview (Attached Screenshot) - Compact Version */}
                                     <AnimatePresence>
-                                        {attachedContext && (
+                                        {attachedContext.length > 0 && (
                                             <motion.div
                                                 initial={{ opacity: 0, y: 10, scale: 0.95 }}
                                                 animate={{ opacity: 1, y: 0, scale: 1 }}
                                                 exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                                                className="absolute bottom-full left-0 mb-3 z-20"
+                                                className="absolute bottom-full left-0 mb-3 z-20 flex items-end gap-2"
                                             >
-                                                <div className="relative group/thumb">
-                                                    <div className="
-                                                            relative w-16 h-16 rounded-xl overflow-hidden border-2 border-white/20 
-                                                            shadow-2xl ring-1 ring-black/50
-                                                        ">
-                                                        <img
-                                                            src={attachedContext.preview}
-                                                            alt="Context"
-                                                            className="w-full h-full object-cover"
-                                                        />
-                                                        <div className="absolute inset-0 bg-black/10 group-hover/thumb:bg-transparent transition-colors" />
-                                                    </div>
+                                                {attachedContext.map((ctx, idx) => (
+                                                    <div key={ctx.path} className="relative group/thumb">
+                                                        <div className="
+                                                                relative w-14 h-14 rounded-xl overflow-hidden border-2 border-white/20 
+                                                                shadow-2xl ring-1 ring-black/50
+                                                            ">
+                                                            <img
+                                                                src={ctx.preview}
+                                                                alt={`Context ${idx + 1}`}
+                                                                className="w-full h-full object-cover"
+                                                            />
+                                                            <div className="absolute inset-0 bg-black/10 group-hover/thumb:bg-transparent transition-colors" />
+                                                        </div>
 
-                                                    {/* Remove Button */}
-                                                    <button
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            setAttachedContext(null);
-                                                        }}
-                                                        className="
-                                                                absolute -top-2 -right-2 w-6 h-6 
-                                                                bg-[#2A2A2A] text-white/70 hover:text-white
-                                                                border border-white/20 rounded-full 
-                                                                flex items-center justify-center 
-                                                                shadow-xl z-30 transition-all active:scale-90
-                                                            "
-                                                    >
-                                                        <X size={12} />
-                                                    </button>
+                                                        {/* Remove Button */}
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                setAttachedContext(prev => prev.filter((_, i) => i !== idx));
+                                                            }}
+                                                            className="
+                                                                    absolute -top-1.5 -right-1.5 w-5 h-5 
+                                                                    bg-[#2A2A2A] text-white/70 hover:text-white
+                                                                    border border-white/20 rounded-full 
+                                                                    flex items-center justify-center 
+                                                                    shadow-xl z-30 transition-all active:scale-90
+                                                                "
+                                                        >
+                                                            <X size={10} />
+                                                        </button>
+                                                    </div>
+                                                ))}
+
+                                                {/* Count badge */}
+                                                <div className="text-[10px] text-slate-400 font-medium pb-1">
+                                                    {attachedContext.length}/{MAX_ATTACHED_IMAGES}
                                                 </div>
                                             </motion.div>
                                         )}
@@ -1809,7 +1875,7 @@ Provide only the answer, nothing else.`;
                                         <button
                                             id="overlay-send-btn"
                                             onClick={handleManualSubmit}
-                                            disabled={!inputValue.trim() && !attachedContext}
+                                            disabled={!inputValue.trim() && attachedContext.length === 0}
                                             className="p-1.5 rounded-lg text-slate-500 hover:text-slate-200 hover:bg-white/10 disabled:opacity-30 transition-all active:scale-90"
                                         >
                                             <CornerDownLeft className="w-3.5 h-3.5" />

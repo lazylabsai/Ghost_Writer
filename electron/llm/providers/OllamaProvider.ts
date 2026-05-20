@@ -12,24 +12,75 @@ import { UNIVERSAL_SYSTEM_PROMPT } from "../prompts";
 import { DEFAULT_MAX_OUTPUT_TOKENS, ILLMProvider, ChatPayload, estimateTokens } from "./ILLMProvider";
 
 const execAsync = promisify(exec);
+const OLLAMA_CAPABILITY_TIMEOUT_MS = 3000;
+const OLLAMA_FAST_RESPONSE_TEMPERATURE = 0.2;
 const OLLAMA_VISION_MODEL_HINTS = [
     'llava',
     'minicpm-v',
+    'minicpm',
     'moondream',
     'qwen2-vl',
     'qwen3-vl',
-    'qwen3.5',
     'vl',
     'vision',
     'pixtral',
     'llama-3.2-vision',
     'llama-3-vision',
-    'internvl'
+    'internvl',
+    'mistral-medium',
+    'qwen3.6',
+    'qwen3.5',
+    'gemma4',
+    'medgemma',
+    'nemotron',
+    'kimi-k2',
+    'glm-ocr',
+    'translategemma',
+    'gemini',
+    'gpt-4o',
+    'claude'
 ];
+const OLLAMA_DEDICATED_VISION_MODEL_HINTS = [
+    'llava',
+    'minicpm-v',
+    'minicpm',
+    'moondream',
+    'qwen2-vl',
+    'qwen3-vl',
+    'vl',
+    'vision',
+    'pixtral',
+    'llama-3.2-vision',
+    'llama-3-vision',
+    'internvl',
+    'glm-ocr'
+];
+const OLLAMA_THINKING_MODEL_HINTS = [
+    'qwen3.5',
+    'qwen3.6',
+    'gemma4'
+];
+
+export type OllamaVisionModel = {
+    name: string;
+    isCloud: boolean;
+    capabilities: string[];
+    size?: number;
+};
 
 export function isLikelyVisionModelName(modelName: string): boolean {
     const lower = modelName.toLowerCase();
     return OLLAMA_VISION_MODEL_HINTS.some(hint => lower.includes(hint));
+}
+
+function isLikelyDedicatedVisionModelName(modelName: string): boolean {
+    const lower = modelName.toLowerCase();
+    return OLLAMA_DEDICATED_VISION_MODEL_HINTS.some(hint => lower.includes(hint));
+}
+
+export function shouldDisableThinkingForFastResponse(modelName: string): boolean {
+    const lower = modelName.toLowerCase();
+    return OLLAMA_THINKING_MODEL_HINTS.some(hint => lower.includes(hint));
 }
 
 export class OllamaProvider implements ILLMProvider {
@@ -38,6 +89,7 @@ export class OllamaProvider implements ILLMProvider {
     private gpuInfo: GPUInfo | null = null;
     private initPromise: Promise<void> | null = null;
     private isInitializing: boolean = false;
+    private capabilityCache = new Map<string, Promise<OllamaVisionModel | null>>();
 
     constructor(
         private ollamaUrl: string = "http://localhost:11434",
@@ -171,10 +223,116 @@ export class OllamaProvider implements ILLMProvider {
         return true;
     }
 
+    private isCloudModel(model: any): boolean {
+        const name = typeof model === "string"
+            ? model.toLowerCase()
+            : String(model?.name || model?.model || "").toLowerCase();
+        if (typeof model === "string") {
+            return name.includes(":cloud") || name.includes("-cloud");
+        }
+        return name.includes(":cloud") || name.includes("-cloud") || !!model?.remote_host || model?.size === 0;
+    }
+
+    private normalizeCapabilities(value: unknown): string[] {
+        if (!Array.isArray(value)) {
+            return [];
+        }
+        return value
+            .filter((item): item is string => typeof item === "string")
+            .map(item => item.toLowerCase());
+    }
+
+    private async getModelMetadata(modelName: string, tagInfo?: any): Promise<OllamaVisionModel | null> {
+        const normalizedName = modelName.trim();
+        if (!normalizedName) {
+            return null;
+        }
+
+        if (!this.capabilityCache.has(normalizedName)) {
+            this.capabilityCache.set(normalizedName, (async () => {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), OLLAMA_CAPABILITY_TIMEOUT_MS);
+                try {
+                    const response = await fetch(`${this.ollamaUrl}/api/show`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ name: normalizedName, verbose: false }),
+                        signal: controller.signal
+                    });
+
+                    if (!response.ok) {
+                        return null;
+                    }
+
+                    const data = await response.json();
+                    const capabilities = this.normalizeCapabilities(data.capabilities);
+                    return {
+                        name: normalizedName,
+                        isCloud: this.isCloudModel(tagInfo ?? normalizedName),
+                        capabilities,
+                        size: typeof tagInfo?.size === "number" ? tagInfo.size : undefined
+                    };
+                } catch {
+                    return null;
+                } finally {
+                    clearTimeout(timeoutId);
+                }
+            })());
+        }
+
+        return this.capabilityCache.get(normalizedName)!;
+    }
+
+    public async modelSupportsVision(modelName: string): Promise<boolean> {
+        const metadata = await this.getModelMetadata(modelName);
+        if (metadata && metadata.capabilities.length > 0) {
+            return metadata.capabilities.includes("vision");
+        }
+        return isLikelyVisionModelName(modelName);
+    }
+
+    private sortVisionModels(models: OllamaVisionModel[], preferCloud: boolean): OllamaVisionModel[] {
+        const speedPriority = ['moondream', 'llava', 'qwen:4b', 'qwen:7b', 'qwen2:7b', 'qwen3.5:4b', 'qwen3.5:9b', 'qwen3.6', 'gemma4:e4b', 'gemma4'];
+        const getScore = (name: string) => {
+            const lower = name.toLowerCase();
+            const index = speedPriority.findIndex(p => lower.includes(p));
+            return index === -1 ? 100 : index;
+        };
+
+        return [...models].sort((a, b) => {
+            if (preferCloud) {
+                if (a.isCloud && !b.isCloud) return -1;
+                if (!a.isCloud && b.isCloud) return 1;
+            } else {
+                if (a.isCloud && !b.isCloud) return 1;
+                if (!a.isCloud && b.isCloud) return -1;
+            }
+
+            const scoreDiff = getScore(a.name) - getScore(b.name);
+            if (scoreDiff !== 0) return scoreDiff;
+
+            const aSize = a.size ?? Number.MAX_SAFE_INTEGER;
+            const bSize = b.size ?? Number.MAX_SAFE_INTEGER;
+            return aSize - bSize;
+        });
+    }
+
+    private async findBestVisionModel(preferCloud: boolean): Promise<OllamaVisionModel | null> {
+        const visionModels = await this.getAvailableVisionModels();
+        const sorted = this.sortVisionModels(visionModels, preferCloud);
+        return sorted[0] ?? null;
+    }
+
+    private applyFastResponseDefaults(body: any, modelId: string): void {
+        if (shouldDisableThinkingForFastResponse(modelId)) {
+            body.think = false;
+        }
+    }
+
     /**
      * Finds all installed models that are likely vision-capable, returning metadata about cloud status.
      */
-    public async getAvailableVisionModels(): Promise<Array<{ name: string, isCloud: boolean }>> {
+    public async getAvailableVisionModels(): Promise<OllamaVisionModel[]> {
         try {
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 5000);
@@ -185,24 +343,31 @@ export class OllamaProvider implements ILLMProvider {
 
             const data = await response.json();
             const rawModels = data.models || [];
-            
-            const visionModels = rawModels.filter((m: any) => isLikelyVisionModelName(m.name));
-            
-            return visionModels.map((m: any) => {
-                const name = m.name.toLowerCase();
-                // Heuristic for Cloud Models:
-                // 1. Explicitly tagged with :cloud
-                // 2. Reported size is 0 (cloud manifest)
-                // 3. Known cloud-only keywords (gemini, gpt, claude, etc.)
-                const isCloudExplicit = name.includes(':cloud');
-                const isCloudBySize = m.size === 0 || m.size === undefined;
-                const isCloudByKeyword = ['gemini', 'gpt', 'claude', 'deepseek-v3', 'kimi', 'glm'].some(k => name.includes(k));
-                
+
+            const modelMetadata = await Promise.all(rawModels.map(async (m: any) => {
+                const modelName = m.name || m.model;
+                if (!modelName) {
+                    return null;
+                }
+
+                const metadata = await this.getModelMetadata(modelName, m);
+                if (metadata && metadata.capabilities.length > 0) {
+                    return metadata.capabilities.includes("vision") ? metadata : null;
+                }
+
+                if (!isLikelyVisionModelName(modelName)) {
+                    return null;
+                }
+
                 return {
-                    name: m.name,
-                    isCloud: isCloudExplicit || isCloudBySize || isCloudByKeyword
+                    name: modelName,
+                    isCloud: this.isCloudModel(m),
+                    capabilities: [] as string[],
+                    size: typeof m.size === "number" ? m.size : undefined
                 };
-            });
+            }));
+
+            return modelMetadata.filter((m): m is OllamaVisionModel => !!m);
         } catch (error) {
             console.warn("[OllamaProvider] Error detecting vision models:", error);
             return [];
@@ -223,7 +388,7 @@ export class OllamaProvider implements ILLMProvider {
             ? `SYSTEM: ${systemPrompt}\nCONTEXT: ${payload.context}\nUSER: ${payload.message}`
             : `SYSTEM: ${systemPrompt}\nUSER: ${payload.message}`;
 
-        return this.callWithModel(this.ollamaModel, fullPrompt, payload.imagePath);
+        return this.callWithModel(this.ollamaModel, fullPrompt, payload.imagePath, payload.imagePaths);
     }
 
     // =========================================================================
@@ -233,41 +398,37 @@ export class OllamaProvider implements ILLMProvider {
     /**
      * Call Ollama with a specific model override
      */
-    public async callWithModel(modelId: string, prompt: string, imagePath?: string): Promise<string> {
+    public async callWithModel(modelId: string, prompt: string, imagePath?: string, imagePaths?: string[]): Promise<string> {
+        const allPaths = new Set<string>();
+        if (imagePath) allPaths.add(imagePath);
+        if (imagePaths) {
+            for (const p of imagePaths) {
+                if (p) allPaths.add(p);
+            }
+        }
+
         const promptTokens = estimateTokens(prompt);
-        const contextWindow = Math.max(4096, Math.min(8192, promptTokens + (imagePath ? 2048 : 1024)));
+        const contextWindow = Math.max(4096, Math.min(8192, promptTokens + (allPaths.size > 0 ? 2048 : 1024)));
 
         const body: any = {
             model: modelId,
             stream: false,
             options: {
-                temperature: 0.7,
+                temperature: OLLAMA_FAST_RESPONSE_TEMPERATURE,
                 num_ctx: contextWindow,
             }
         };
+        this.applyFastResponseDefaults(body, modelId);
 
-        if (imagePath) {
-            const currentLower = modelId.toLowerCase();
-            const isVision = isLikelyVisionModelName(currentLower);
+        if (allPaths.size > 0) {
+            let isVision = await this.modelSupportsVision(modelId);
 
             if (!isVision) {
-                const available = await this.getModels();
-                const isCloudMode = modelId.toLowerCase().includes('cloud');
-
-                // Prioritize vision models that match the current tier (Cloud vs Local)
-                const sortedAvailable = [...available].sort((a, b) => {
-                    const aCloud = a.toLowerCase().includes('cloud');
-                    const bCloud = b.toLowerCase().includes('cloud');
-                    if (isCloudMode) return (aCloud === bCloud) ? 0 : (aCloud ? -1 : 1);
-                    return (aCloud === bCloud) ? 0 : (aCloud ? 1 : -1);
-                });
-
-                const visionModel = sortedAvailable.find(m => {
-                    return isLikelyVisionModelName(m);
-                });
+                const visionModel = await this.findBestVisionModel(modelId.toLowerCase().includes('cloud'));
                 if (visionModel) {
-                    console.log(`[OllamaProvider] Auto-switching to vision model: ${visionModel}`);
-                    modelId = visionModel;
+                    console.log(`[OllamaProvider] Auto-switching to vision model: ${visionModel.name}`);
+                    modelId = visionModel.name;
+                    isVision = true;
                 } else {
                     const error = "Screenshot analysis requires a vision-capable local Ollama model. Install one with `ollama pull llava:7b` or `ollama pull qwen2.5-vl:7b`.";
                     console.warn(`[OllamaProvider] ${error}`);
@@ -277,14 +438,18 @@ export class OllamaProvider implements ILLMProvider {
 
             if (isVision || modelId !== body.model) {
                 try {
-                    const img = nativeImage.createFromPath(imagePath);
-                    const resized = img.resize({ width: Math.min(1024, img.getSize().width) });
-                    const imageBase64 = resized.toJPEG(75).toString('base64');
+                    const base64Images: string[] = [];
+                    for (const p of allPaths) {
+                        const img = nativeImage.createFromPath(p);
+                        const resized = img.resize({ width: Math.min(1024, img.getSize().width) });
+                        base64Images.push(resized.toJPEG(75).toString('base64'));
+                    }
 
                     body.model = modelId;
+                    this.applyFastResponseDefaults(body, modelId);
                     body.messages = [
                         { role: 'system', content: 'You are an AI analyzing a user\'s screen. Provide a concise, helpful response.' },
-                        { role: 'user', content: prompt, images: [imageBase64] }
+                        { role: 'user', content: prompt, images: base64Images }
                     ];
 
                     const resp = await fetch(`${this.ollamaUrl}/api/chat`, {
@@ -293,14 +458,47 @@ export class OllamaProvider implements ILLMProvider {
                         body: JSON.stringify(body)
                     });
 
-                    const data = await resp.json();
-                    return data.message?.content || data.response || "";
+                    if (resp.ok) {
+                        const data = await resp.json();
+                        return data.message?.content || data.response || "";
+                    } else {
+                        console.warn(`[OllamaProvider] /api/chat vision call returned status ${resp.status}. Trying fallback...`);
+                    }
                 } catch (e) {
                     console.error("[OllamaProvider] Vision call failed:", e);
                 }
             }
         }
 
+        // Standardize plain text/fallback calls to attempt /api/chat first for maximum compatibility
+        try {
+            const chatBody: any = {
+                model: modelId,
+                stream: false,
+                messages: [
+                    { role: 'user', content: prompt }
+                ],
+                options: body.options
+            };
+            this.applyFastResponseDefaults(chatBody, modelId);
+
+            const resp = await fetch(`${this.ollamaUrl}/api/chat`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(chatBody)
+            });
+
+            if (resp.ok) {
+                const data = await resp.json();
+                return data.message?.content || data.response || "";
+            } else {
+                console.warn(`[OllamaProvider] /api/chat returned status ${resp.status}. Trying legacy /api/generate fallback...`);
+            }
+        } catch (e) {
+            console.warn("[OllamaProvider] /api/chat call failed, trying /api/generate fallback:", e);
+        }
+
+        // Legacy /api/generate fallback
         body.prompt = prompt;
         const resp = await fetch(`${this.ollamaUrl}/api/generate`, {
             method: 'POST',
@@ -315,8 +513,8 @@ export class OllamaProvider implements ILLMProvider {
     /**
      * Call Ollama with the currently selected model
      */
-    public async call(prompt: string, imagePath?: string): Promise<string> {
-        return this.callWithModel(this.ollamaModel, prompt, imagePath);
+    public async call(prompt: string, imagePath?: string, imagePaths?: string[]): Promise<string> {
+        return this.callWithModel(this.ollamaModel, prompt, imagePath, imagePaths);
     }
 
     // =========================================================================
@@ -331,7 +529,8 @@ export class OllamaProvider implements ILLMProvider {
             payload.message,
             payload.context,
             payload.systemPrompt || (payload.options?.skipSystemPrompt ? "" : UNIVERSAL_SYSTEM_PROMPT),
-            payload.imagePath
+            payload.imagePath,
+            payload.imagePaths
         );
     }
 
@@ -342,42 +541,37 @@ export class OllamaProvider implements ILLMProvider {
         message: string,
         context?: string,
         systemPrompt: string = UNIVERSAL_SYSTEM_PROMPT,
-        imagePath?: string
+        imagePath?: string,
+        imagePaths?: string[]
     ): AsyncGenerator<string, void, unknown> {
+        const allPaths = new Set<string>();
+        if (imagePath) allPaths.add(imagePath);
+        if (imagePaths) {
+            for (const p of imagePaths) {
+                if (p) allPaths.add(p);
+            }
+        }
+
         const fullPrompt = context
             ? `SYSTEM: ${systemPrompt}\nCONTEXT: ${context}\nUSER: ${message}`
             : `SYSTEM: ${systemPrompt}\nUSER: ${message}`;
 
         const promptTokens = estimateTokens(fullPrompt);
-        const contextWindow = Math.max(4096, Math.min(8192, promptTokens + (imagePath ? 2048 : 1024)));
+        const contextWindow = Math.max(4096, Math.min(8192, promptTokens + (allPaths.size > 0 ? 2048 : 1024)));
 
         try {
             let modelToUse = this.ollamaModel;
             const images: string[] = [];
 
-            if (imagePath) {
-                const currentLower = this.ollamaModel.toLowerCase();
-                const isAlreadyVision = isLikelyVisionModelName(currentLower);
+            if (allPaths.size > 0) {
+                const isAlreadyVision = await this.modelSupportsVision(this.ollamaModel);
 
                 if (!isAlreadyVision) {
-                    const available = await this.getModels();
-                    const isCloudMode = this.ollamaModel.toLowerCase().includes('cloud');
-
-                    // Prioritize matching tiers (Cloud -> Cloud, Local -> Local)
-                    const sortedAvailable = [...available].sort((a, b) => {
-                        const aCloud = a.toLowerCase().includes('cloud');
-                        const bCloud = b.toLowerCase().includes('cloud');
-                        if (isCloudMode) return (aCloud === bCloud) ? 0 : (aCloud ? -1 : 1);
-                        return (aCloud === bCloud) ? 0 : (aCloud ? 1 : -1);
-                    });
-
-                    const visionModel = sortedAvailable.find(m => {
-                        return isLikelyVisionModelName(m);
-                    });
+                    const visionModel = await this.findBestVisionModel(this.ollamaModel.toLowerCase().includes('cloud'));
 
                     if (visionModel) {
-                        console.log(`[OllamaProvider] Switching to vision model for streaming: ${visionModel}`);
-                        modelToUse = visionModel;
+                        console.log(`[OllamaProvider] Switching to vision model for streaming: ${visionModel.name}`);
+                        modelToUse = visionModel.name;
                     } else {
                         console.warn(`[OllamaProvider] No vision model found in Ollama.`);
                         yield "Full Privacy Mode requires a vision-capable local Ollama model for screenshot analysis. Run `ollama pull llava:7b` or `ollama pull qwen2.5-vl:7b`.";
@@ -386,13 +580,15 @@ export class OllamaProvider implements ILLMProvider {
                 } else {
                     modelToUse = this.ollamaModel;
                 }
-                try {
-                    const img = nativeImage.createFromPath(imagePath);
-                    const width = Math.max(1, img.getSize().width || 1);
-                    const resized = img.resize({ width: Math.min(1024, width) });
-                    images.push(resized.toJPEG(75).toString('base64'));
-                } catch (err) {
-                    console.error(`[OllamaProvider] Failed to process image:`, err);
+                for (const p of allPaths) {
+                    try {
+                        const img = nativeImage.createFromPath(p);
+                        const width = Math.max(1, img.getSize().width || 1);
+                        const resized = img.resize({ width: Math.min(1024, width) });
+                        images.push(resized.toJPEG(75).toString('base64'));
+                    } catch (err) {
+                        console.error(`[OllamaProvider] Failed to process image ${p}:`, err);
+                    }
                 }
             }
 
@@ -404,34 +600,65 @@ export class OllamaProvider implements ILLMProvider {
 
             let lineBuffer = "";
             try {
-                const isChat = images.length > 0;
-                const endpoint = isChat ? '/api/chat' : '/api/generate';
-
                 const body: any = {
                     model: modelToUse,
                     stream: true,
                     options: {
-                        temperature: 0.7,
+                        temperature: OLLAMA_FAST_RESPONSE_TEMPERATURE,
                         num_ctx: contextWindow,
                         num_thread: 8,
                     }
                 };
+                this.applyFastResponseDefaults(body, modelToUse);
 
-                if (isChat) {
-                    body.messages = [
-                        { role: 'system', content: systemPrompt },
-                        { role: 'user', content: context ? `CONTEXT: ${context}\n\nQUESTION: ${message}` : message, images }
-                    ];
-                } else {
-                    body.prompt = fullPrompt;
+                const messages = [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: context ? `CONTEXT: ${context}\n\nQUESTION: ${message}` : message }
+                ];
+                if (images.length > 0) {
+                    (messages[1] as any).images = images;
                 }
+                body.messages = messages;
 
-                const response = await fetch(`${this.ollamaUrl}${endpoint}`, {
+                let response = await fetch(`${this.ollamaUrl}/api/chat`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(body),
                     signal: controller.signal
                 });
+
+                let isChatResponse = true;
+
+                if (!response.ok) {
+                    console.warn(`[OllamaProvider] Streaming /api/chat failed with status ${response.status}. Trying legacy /api/generate fallback...`);
+                    // Fallback to /api/generate
+                    const fallbackBody: any = {
+                        model: modelToUse,
+                        stream: true,
+                        prompt: fullPrompt,
+                        options: body.options
+                    };
+                    this.applyFastResponseDefaults(fallbackBody, modelToUse);
+                    response = await fetch(`${this.ollamaUrl}/api/generate`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(fallbackBody),
+                        signal: controller.signal
+                    });
+                    isChatResponse = false;
+                }
+
+                if (!response.ok) {
+                    let errorMessage = `Ollama returned HTTP status ${response.status}`;
+                    try {
+                        const txt = await response.text();
+                        const errorJson = JSON.parse(txt);
+                        if (errorJson.error) {
+                            errorMessage = errorJson.error;
+                        }
+                    } catch {}
+                    throw new Error(errorMessage);
+                }
 
                 if (!response.body) throw new Error("No response body from Ollama");
 
@@ -447,7 +674,7 @@ export class OllamaProvider implements ILLMProvider {
                         if (!trimmed) continue;
                         try {
                             const json = JSON.parse(trimmed);
-                            const content = isChat ? json.message?.content : json.response;
+                            const content = isChatResponse ? json.message?.content : json.response;
                             if (content) yield content;
                             if (json.done) {
                                 clearTimeout(timeoutId);
@@ -569,8 +796,7 @@ export class OllamaProvider implements ILLMProvider {
     ): Promise<string> {
         try {
             let modelToUse = this.ollamaModel;
-            const currentLower = this.ollamaModel.toLowerCase();
-            const isVisionModel = isLikelyVisionModelName(currentLower);
+            const isVisionModel = isLikelyDedicatedVisionModelName(this.ollamaModel);
 
             if (isVisionModel) {
                 console.log(`[OllamaProvider] Selected model ${this.ollamaModel} is Vision-heavy. Searching for faster text-only summary model...`);

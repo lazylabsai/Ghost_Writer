@@ -185,7 +185,7 @@ interface ElectronAPI {
   toggleAdvancedSettings: () => Promise<void>
 
   // Streaming listeners
-  streamGeminiChat: (message: string, imagePath?: string, context?: string, options?: { skipSystemPrompt?: boolean }) => Promise<void>
+  streamGeminiChat: (message: string, imagePath?: string, context?: string, options?: { skipSystemPrompt?: boolean }, imagePaths?: string[]) => Promise<void>
   onGeminiStreamToken: (callback: (token: string) => void) => () => void
   onGeminiStreamDone: (callback: () => void) => () => void
   onGeminiStreamError: (callback: (error: string) => void) => () => void
@@ -193,6 +193,7 @@ interface ElectronAPI {
 
   onUndetectableChanged: (callback: (state: boolean) => void) => () => void
   onAirGapChanged: (callback: (enabled: boolean) => void) => () => void
+  onClickThroughChanged: (callback: (isClickThrough: boolean) => void) => () => void
 
   // Theme API
   getThemeMode: () => Promise<{ mode: 'system' | 'light' | 'dark', resolved: 'light' | 'dark' }>
@@ -733,7 +734,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   toggleAdvancedSettings: () => ipcRenderer.invoke("toggle-advanced-settings"),
 
   // Streaming listeners
-  streamGeminiChat: (message: string, imagePath?: string, context?: string, options?: { skipSystemPrompt?: boolean }) => ipcRenderer.invoke("gemini-chat-stream", message, imagePath, context, options),
+  streamGeminiChat: (message: string, imagePath?: string, context?: string, options?: { skipSystemPrompt?: boolean }, imagePaths?: string[]) => ipcRenderer.invoke("gemini-chat-stream", message, imagePath, context, options, imagePaths),
   onGeminiStreamToken: (callback: (token: string) => void) => {
     const subscription = (_: any, token: string) => callback(token)
     ipcRenderer.on("gemini-stream-token", subscription)
@@ -775,6 +776,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.on('air-gap-changed', subscription)
     return () => {
       ipcRenderer.removeListener('air-gap-changed', subscription)
+    }
+  },
+  onClickThroughChanged: (callback: (isClickThrough: boolean) => void) => {
+    const subscription = (_: any, isClickThrough: boolean) => callback(isClickThrough)
+    ipcRenderer.on('click-through-changed', subscription)
+    return () => {
+      ipcRenderer.removeListener('click-through-changed', subscription)
     }
   },
 

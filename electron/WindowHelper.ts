@@ -19,6 +19,7 @@ export class WindowHelper {
   // Track current window mode (persists even when overlay is hidden via Cmd+B)
   private currentWindowMode: 'launcher' | 'overlay' = 'launcher'
   private overlayCenterX: number | null = null
+  private isClickThrough: boolean = false
 
   private appState: AppState
 
@@ -43,6 +44,15 @@ export class WindowHelper {
       this.overlayWindow.setContentProtection(enable)
     }
     // Content Protection
+  }
+
+  public toggleClickThrough(): boolean {
+    this.isClickThrough = !this.isClickThrough;
+    if (this.overlayWindow && !this.overlayWindow.isDestroyed()) {
+      this.overlayWindow.setIgnoreMouseEvents(this.isClickThrough, { forward: true });
+      this.overlayWindow.webContents.send("click-through-changed", this.isClickThrough);
+    }
+    return this.isClickThrough;
   }
 
   public setWindowDimensions(width: number, height: number): void {

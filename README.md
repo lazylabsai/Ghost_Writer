@@ -10,35 +10,34 @@
   [![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20macOS%20arm64-111827?style=for-the-badge)](https://github.com/lazylabsai/Ghost_Writer/releases)
   [![Launch Mode](https://img.shields.io/badge/launch-desktop%20beta-10b981?style=for-the-badge)](https://github.com/lazylabsai/Ghost_Writer/releases)
 
-  Ghost Writer is a desktop beta for high-fidelity meeting and interview assistance.
-  It combines live transcription, screenshot-aware answering, local privacy options, and multi-provider LLM routing in a direct-download Electron app.
+  Ghost Writer is a powerful, stealth-first desktop assistant for high-fidelity meeting and interview support. Built by LaZy Labs, it combines live transcription, screenshot-aware AI answering, local privacy guarantees, and a completely invisible footprint to give you the ultimate edge in any professional scenario.
 
   [Releases](https://github.com/lazylabsai/Ghost_Writer/releases) · [Architecture](docs/ARCHITECTURE.md) · [Privacy](docs/PRIVACY.md) · [Troubleshooting](docs/TROUBLESHOOTING.md)
 </div>
 
 ---
 
-## What It Does
+## 🌟 Core Features
 
-- Real-time interview and meeting assistance with overlay and launcher modes
-- **Stealth Remote Display**: View AI answers on your mobile device to bypass overlay detection
-- Local Whisper and Ollama support for privacy-sensitive workflows
-- Screenshot-aware answers and meeting recap generation
-- Retrieval over stored meeting history and context documents
-- Configurable cloud providers including Gemini, OpenAI-compatible, Claude, Groq, and custom endpoints
+- **Ghost Mode (Stealth Overlay)**: A completely transparent, click-through overlay that sits seamlessly over your screen. It is heavily protected against screen-sharing capture (utilizing OS-level display affinity protections).
+- **Remote Display Companion**: View live AI answers and transcripts directly on your smartphone via a local WebSocket connection, completely bypassing any risk of desktop screen capture.
+- **"What to Answer?" Intelligence (Ctrl+J)**: Instantly generate the perfect response to the last question asked. Ghost Writer intelligently parses the conversation context and your provided resume/job description to formulate natural, authentic answers.
+- **Smart Fallback**: Even if a direct question hasn't been asked, pressing "What to Answer?" provides you with an insightful, momentum-building thought based on the last 3 minutes of conversation.
+- **Vision-Aware Responses**: Attach screenshots directly to the context stream for architecture diagrams or coding tests. Ghost Writer uses OCR or native multimodal AI to understand the visual context perfectly.
+- **Disguise Mode**: Shrink the application UI into an innocent-looking terminal window, a fake system settings popup, or completely hide it with a single keystroke (Ctrl+B).
+- **Air-Gapped Privacy**: Run everything completely offline using Local Whisper for transcription and local Ollama models for generation. Your data never leaves your machine unless you explicitly configure a cloud provider.
 
-## Supported Platforms
+## 🛠️ Supported Platforms
 
-- Windows x64
-- macOS arm64
-- **Mobile Viewer**: Any smartphone on the same Wi-Fi network (via browser)
+- **Windows x64** (Optimal compatibility for Ghost Mode screen-share evasion)
+- **macOS Apple Silicon** (arm64)
+- **Mobile Viewer**: Any modern smartphone browser on the same Wi-Fi network.
 
-## 🚀 Quick Install (One-Command Setup)
+---
 
-For the easiest and cleanest setup, run the following command in your terminal. This will automatically download and install the latest stable version of Ghost Writer.
+## 🚀 One-Command Setup (Recommended)
 
-> [!TIP]
-> This method is recommended for most users as it handles prerequisite checks and installs the app to a clean, user-local location.
+To get started immediately, we provide a single terminal command that automatically clones the repository, installs all dependencies, and builds the application from source. This ensures a clean setup and bypasses OS "unrecognized developer" warnings on fresh machines.
 
 ### 🪟 Windows (PowerShell)
 ```powershell
@@ -50,77 +49,59 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://raw.githubus
 curl -fsSL https://raw.githubusercontent.com/lazylabsai/Ghost_Writer/main/install.sh | bash
 ```
 
-### Manual install
+After the installation completes, simply navigate to your Desktop and launch the app:
+```bash
+cd ~/Desktop/Ghost_Writer
+npm start
+```
 
-1. Download the latest installer from [GitHub Releases](https://github.com/lazylabsai/Ghost_Writer/releases).
-2. Verify the published SHA256 checksum from `checksums.txt`.
-3. Run the installer.
-4. Complete the onboarding flow on first launch.
+---
 
-## Data And Privacy
+## 🔒 Data And Privacy
 
-- API keys and license data are stored with Electron `safeStorage` when available.
-- Telemetry is optional and disabled by default for v1.0.0.
-- Full Privacy Mode blocks cloud STT and cloud LLM routing until local dependencies are ready.
-- Local transcripts, meeting history, and context files stay on-device unless you explicitly use a cloud provider.
+We believe your professional data is yours alone. 
+
+- **End-to-End Local Guarantee**: If you enable Full Privacy Mode, Ghost Writer strictly utilizes local system resources (Local Whisper STT and Ollama LLM). No cloud telemetry, no network calls.
+- **Secure Credentials**: If you opt into using advanced cloud providers (e.g., OpenAI, Anthropic, Gemini, Groq), your API keys are aggressively encrypted and stored locally using Electron's native `safeStorage`.
+- **Zero Telemetry**: We have completely disabled all product telemetry and tracking for the v1.0.0 public launch.
 
 More detail: [Privacy](docs/PRIVACY.md)
 
-## Current Launch Posture
- 
-- Version: `1.0.0`
-- Distribution: Unsigned direct-download desktop beta
-- Infrastructure: Hardened enterprise analytics with granular meeting/interview tracking
-- Monetization: Disabled for the v1.0.0 beta launch
-- Primary install path: Terminal one-liners plus manual downloads as fallback
+## ⌨️ Global Shortcuts
 
-## Known Limitations
+- **Ctrl+J**: Instantly trigger the "What to answer?" feature.
+- **Ctrl+B**: Rapidly hide or show the Ghost Overlay.
+- **Ctrl+Shift+H**: Activate Disguise Mode (morph the app into a terminal or settings window).
 
-- Unsigned installers can still trigger OS trust warnings until code signing is added.
-- macOS support is currently focused on Apple Silicon.
-- Local-only mode requires both Local Whisper and Ollama to be installed and healthy.
-- Some advanced workflows depend on third-party provider API keys that you supply.
+## 🧑‍💻 Manual Development
 
-## Development
-
-Install dependencies:
+If you prefer to manually install or contribute to the project:
 
 ```bash
-npm ci
-```
+# 1. Clone the repository
+git clone https://github.com/lazylabsai/Ghost_Writer.git
+cd Ghost_Writer
 
-Build the renderer:
+# 2. Install dependencies
+npm install
 
-```bash
-npm run build
-```
-
-Build the desktop app:
-
-```bash
+# 3. Build the application
 npm run build:desktop
+
+# 4. Start the application
+npm start
 ```
 
-Create release artifacts:
-
+Run test suite:
 ```bash
-npm run dist
+npm test
 ```
 
-Run key verification scripts:
-
-```bash
-node tests/test_smoke.js
-node tests/meeting_summary_routing.test.js
-node tests/prompt_settings.test.js
-```
-
-## Support
+## 🤝 Support
 
 - Issues: [GitHub Issues](https://github.com/lazylabsai/Ghost_Writer/issues)
-- Troubleshooting: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
-- Privacy notes: [docs/PRIVACY.md](docs/PRIVACY.md)
+- Troubleshooting Guide: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
 
-## License
+## 📄 License
 
-This software is proprietary. Redistribution and unauthorized commercial reuse are not permitted. See [LICENSE](LICENSE).
+This software is proprietary to LaZy Labs. Redistribution and unauthorized commercial reuse are not permitted. See [LICENSE](LICENSE).
