@@ -437,6 +437,9 @@ export function initializeIpcHandlers(appState: AppState): void {
       intelligenceManager.addAssistantMessage(result);
       console.log(`[IPC] Updated IntelligenceManager.Last message: `, intelligenceManager.getLastAssistantMessage()?.substring(0, 50));
 
+      const { RemoteServer } = require('./services/RemoteServer');
+      RemoteServer.getInstance().pushAnswer(result);
+
       // Log Usage
       intelligenceManager.logUsage('chat', message, result);
 
@@ -495,12 +498,15 @@ export function initializeIpcHandlers(appState: AppState): void {
           options: { skipSystemPrompt: options?.skipSystemPrompt }
         });
 
+        const { RemoteServer } = require('./services/RemoteServer');
         for await (const token of stream) {
           event.sender.send("gemini-stream-token", token);
+          RemoteServer.getInstance().pushToken(token);
           fullResponse += token;
         }
 
         event.sender.send("gemini-stream-done");
+        RemoteServer.getInstance().pushAnswer(fullResponse, context);
 
         // Update IntelligenceManager with ASSISTANT message after completion
         if (fullResponse.trim().length > 0) {

@@ -108,6 +108,24 @@ const extractResponseSources = (text: string): { text: string; sources: string[]
     return { text: cleanedText, sources };
 };
 
+const CopyCodeButton: React.FC<{ code: string }> = ({ code }) => {
+    const [copied, setCopied] = useState(false);
+    return (
+        <button
+            onClick={() => {
+                navigator.clipboard.writeText(code);
+                setCopied(true);
+                setTimeout(() => setCopied(false), 2000);
+            }}
+            className="flex items-center gap-1.5 px-2 py-1 hover:bg-white/10 rounded transition-colors text-slate-400 hover:text-slate-200 text-xs font-sans"
+            title="Copy code"
+        >
+            {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+            <span>{copied ? 'Copied!' : 'Copy code'}</span>
+        </button>
+    );
+};
+
 interface Message {
     id: string;
     role: 'user' | 'system' | 'interviewer';
@@ -1277,9 +1295,8 @@ Provide only the answer, nothing else.`;
                                                     <div className="w-2 h-2 rounded-full bg-purple-500/80" />
                                                     {lang || 'CODE'}
                                                 </div>
-                                                <div className="flex gap-1.5">
-                                                    <div className="w-2 h-2 rounded-full bg-white/10" />
-                                                    <div className="w-2 h-2 rounded-full bg-white/10" />
+                                                <div className="flex items-center gap-1.5">
+                                                    <CopyCodeButton code={code} />
                                                 </div>
                                             </div>
                                             <SyntaxHighlighter
@@ -1445,9 +1462,8 @@ Provide only the answer, nothing else.`;
                                                     <div className="w-2 h-2 rounded-full bg-emerald-500/80" />
                                                     {lang || 'CODE'}
                                                 </div>
-                                                <div className="flex gap-1.5">
-                                                    <div className="w-2 h-2 rounded-full bg-white/10" />
-                                                    <div className="w-2 h-2 rounded-full bg-white/10" />
+                                                <div className="flex items-center gap-1.5">
+                                                    <CopyCodeButton code={code} />
                                                 </div>
                                             </div>
 

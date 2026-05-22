@@ -207,6 +207,47 @@
             </div>
         </section>
 
+        <!-- LIVE CODING COPILOT SECTION -->
+        <section id="coding-copilot" class="py-24 px-4 border-t border-white/5 relative overflow-hidden bg-black/40">
+            <div class="ambient-glow purple" style="top: 10%; right: 10%;"></div>
+            <div class="max-w-6xl mx-auto">
+                <div class="grid md:grid-cols-2 gap-16 items-center flex-col-reverse md:flex-row">
+                    <div class="relative order-2 md:order-1">
+                        <div class="glass-card p-2 rounded-2xl border border-white/10 shadow-2xl relative z-10 overflow-hidden transform hover:scale-[1.02] transition-transform duration-500">
+                            <img src="images/coding_mockup.png" alt="Live Coding Copilot in action" class="w-full h-auto rounded-xl">
+                        </div>
+                        <div class="absolute -bottom-10 -left-10 w-64 h-64 bg-brand-blue/20 blur-[100px] rounded-full"></div>
+                    </div>
+                    <div class="order-1 md:order-2">
+                        <div class="inline-flex items-center gap-2 mb-6 px-3 py-1 rounded-full border border-purple-500/30 bg-purple-500/10 text-xs font-semibold text-purple-300">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"></path></svg>
+                            NEW FEATURE
+                        </div>
+                        <h2 class="text-4xl md:text-5xl font-bold mb-6 tracking-tight">
+                            Live Coding <span class="text-gradient">Copilot.</span>
+                        </h2>
+                        <p class="text-gray-400 text-lg mb-8 leading-relaxed font-light">
+                            Ace technical interviews effortlessly. Capture any coding environment, and Ghost Writer seamlessly parses your active editor's boilerplate to perfectly match the required structure.
+                        </p>
+                        <ul class="space-y-4 text-sm text-gray-300">
+                            <li class="flex items-center gap-3">
+                                <span class="p-1.5 rounded-full bg-white/5"><svg class="w-4 h-4 text-brand-blue" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg></span>
+                                Automatically provides both Brute Force & Optimized approaches
+                            </li>
+                            <li class="flex items-center gap-3">
+                                <span class="p-1.5 rounded-full bg-white/5"><svg class="w-4 h-4 text-brand-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg></span>
+                                Intelligent boilerplate & signature matching
+                            </li>
+                            <li class="flex items-center gap-3">
+                                <span class="p-1.5 rounded-full bg-white/5"><svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg></span>
+                                One-click copy preserves all indentation
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </section>
+
         <section id="guide" class="py-24 px-4 border-t border-white/5 relative overflow-hidden">
             <div class="ambient-glow purple" style="top: 20%; right: -10%;"></div>
             <div class="max-w-6xl mx-auto">
@@ -256,6 +297,12 @@
                                     <span class="kbd-key">Ctrl</span><span class="kbd-key">B</span>
                                 </div>
                             </div>
+                            <div class="flex items-center justify-between p-4 glass-card bg-white/5 border-white/5 border-t border-brand-purple/20">
+                                <span class="text-sm font-medium text-brand-purple">Morph to Disguise Mode (Terminal/Settings)</span>
+                                <div class="flex">
+                                    <span class="kbd-key">Ctrl</span><span class="kbd-key">⇧</span><span class="kbd-key">H</span>
+                                </div>
+                            </div>
                         </div>
                     </div>
 
@@ -280,6 +327,10 @@
                             <div class="glass-card p-6 border-white/5">
                                 <h4 class="font-bold text-white mb-2">3. Real-Time Logic Injection</h4>
                                 <p class="text-sm text-gray-400">When a complex question arises, hit <span class="text-brand-blue">Ctrl+J</span>. This triggers our reasoning chain (Gemini 1.5 Flash/Pro) to analyze the latest screenshots and Whisper-transcribed audio simultaneously.</p>
+                            </div>
+                            <div class="glass-card p-6 border-white/5 border-l-2 border-l-brand-purple">
+                                <h4 class="font-bold text-white mb-2">4. Live Coding Workflow</h4>
+                                <p class="text-sm text-gray-400">Encountering an algorithm test? Just ensure the editor boilerplate is visible on screen. When the AI answers, it will perfectly adopt the environment's required class and function signatures. Click the <span class="text-brand-purple font-semibold">Copy code</span> button inside the code block to safely copy preserving all indentation.</p>
                             </div>
                         </div>
                     </div>

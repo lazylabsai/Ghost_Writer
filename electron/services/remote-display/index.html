@@ -26,6 +26,36 @@
             font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, sans-serif;
         }
 
+        /* Markdown Styles */
+        #answer-content p {
+            margin-bottom: 12px;
+        }
+
+        pre {
+            background-color: var(--bg-input);
+            padding: 16px;
+            border-radius: 12px;
+            overflow-x: auto;
+            border: 1px solid rgba(255,255,255,0.05);
+            margin: 16px 0;
+        }
+
+        code {
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+            font-size: 0.9em;
+            color: var(--accent-primary);
+            background: rgba(56, 189, 248, 0.1);
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+
+        pre code {
+            color: var(--text-primary);
+            background: transparent;
+            padding: 0;
+            border-radius: 0;
+        }
+
         body {
             background-color: var(--bg-dark);
             color: var(--text-primary);
@@ -186,15 +216,16 @@
         #answer-card {
             background: linear-gradient(180deg, var(--bg-card), #0d0d14);
             border: 1px solid rgba(255, 255, 255, 0.08);
-            border-radius: 32px;
-            padding: 32px;
+            border-radius: 24px;
+            padding: 20px;
             flex: 1;
             box-shadow: 0 40px 80px -20px rgba(0, 0, 0, 0.8);
             display: flex;
             flex-direction: column;
-            gap: 20px;
+            gap: 16px;
             position: relative;
-            overflow: hidden;
+            overflow-y: auto;
+            scroll-behavior: smooth;
         }
 
         .card-header {
@@ -224,11 +255,16 @@
         }
 
         #answer-content {
-            font-size: 1.15rem;
-            line-height: 1.6;
+            font-size: 1.2rem;
+            line-height: 1.65;
             color: var(--text-primary);
-            white-space: pre-wrap;
+            word-wrap: break-word;
+            word-break: break-word;
             flex: 1;
+        }
+
+        #answer-content.streaming {
+            white-space: pre-wrap;
         }
 
         .placeholder {
@@ -322,6 +358,9 @@
         </footer>
     </div>
 
+    <!-- Markdown Parser -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
     <script>
         let currentPin = '';
         let ws = null;
@@ -412,6 +451,7 @@
                         // Reset content if intent changed (new generation)
                         if (activeIntent !== message.data.intent) {
                             contentDiv.innerHTML = '';
+                            contentDiv.classList.add('streaming');
                             activeIntent = message.data.intent;
                         }
                         
@@ -435,7 +475,9 @@
                         card.scrollTop = card.scrollHeight;
                         
                     } else if (message.type === 'answer') {
-                        contentDiv.innerHTML = message.data.answer;
+                        // Parse the raw markdown answer into beautifully styled HTML
+                        contentDiv.classList.remove('streaming');
+                        contentDiv.innerHTML = marked.parse(message.data.answer);
                         activeIntent = ''; // Reset for next stream
                         if ('vibrate' in navigator) navigator.vibrate(100);
 
@@ -453,6 +495,7 @@
                 lockScreen.classList.remove('hidden');
                 document.body.classList.remove('unlocked');
                 clearPin();
+                contentDiv.innerHTML = '<div class="placeholder"><div class="placeholder-icon">⚡</div><div>Waiting for suggestions from your PC...</div></div>';
                 setTimeout(connect, 3000);
             };
         }

@@ -33,11 +33,11 @@ export class RemoteServer {
                 // Try multiple possible locations for index.html
                 const possiblePaths = [
                     // Standard relative path (works in production or if copied to dist)
-                    path.join(__dirname, 'mobile_view', 'index.html'),
+                    path.join(__dirname, 'remote-display', 'index.html'),
                     // Fallback for development (relative to source electron/services)
-                    path.join(process.cwd(), 'electron', 'services', 'mobile_view', 'index.html'),
+                    path.join(process.cwd(), 'electron', 'services', 'remote-display', 'index.html'),
                     // Fallback for production extraResources
-                    path.join(process.cwd(), 'resources', 'mobile_view', 'index.html')
+                    path.join(process.cwd(), 'resources', 'remote-display', 'index.html')
                 ];
 
                 let filePath = '';
@@ -133,17 +133,31 @@ export class RemoteServer {
 
     public getLocalIP(): string {
         const interfaces = os.networkInterfaces();
+        let fallbackIp = '127.0.0.1';
+
         for (const devName in interfaces) {
             const iface = interfaces[devName];
             if (!iface) continue;
+
+            // Skip common virtual adapters (Hyper-V, WSL, Docker, VMware, VirtualBox)
+            const isVirtual = devName.toLowerCase().includes('vethernet') || 
+                              devName.toLowerCase().includes('wsl') ||
+                              devName.toLowerCase().includes('virtual') ||
+                              devName.toLowerCase().includes('vmware') ||
+                              devName.toLowerCase().includes('docker');
+
             for (let i = 0; i < iface.length; i++) {
                 const alias = iface[i];
                 if (alias.family === 'IPv4' && alias.address !== '127.0.0.1' && !alias.internal) {
-                    return alias.address;
+                    if (!isVirtual) {
+                        return alias.address; // Return first physical IP found
+                    } else if (fallbackIp === '127.0.0.1') {
+                        fallbackIp = alias.address; // Save virtual IP as fallback just in case
+                    }
                 }
             }
         }
-        return 'localhost';
+        return fallbackIp;
     }
 
     public getConnectionUrl(): string {

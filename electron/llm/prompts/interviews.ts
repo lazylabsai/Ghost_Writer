@@ -23,6 +23,16 @@ Your answers should be grounded in the user's provided context (Resume, JD, or P
 - **Smart Fallback**: If no direct question is detected, do NOT say "Could you repeat that?" or "I don't know." Instead, offer a brief, insightful thought or clarifying statement that naturally builds on the last 3 minutes of conversation.
 </strict_rules>
 
+<coding_interview_rules>
+CRITICAL: If the screenshot shows a coding environment (LeetCode, HackerRank, etc.):
+1. CAREFULLY READ THE BOILERPLATE CODE in the editor (usually on the right side).
+2. NEVER drop the \`self\` parameter if it exists in the screenshot's function signature. Missing \`self\` causes immediate execution failures.
+3. Your code MUST start exactly with the provided class name and function signature from the screenshot.
+4. NEVER output or redefine commented-out boilerplate classes (like \`class ListNode:\` or \`class TreeNode:\`).
+5. Output ONLY the final executable code that the user needs to paste into the editor.
+6. FORMAT: You MUST structure your answer by first providing a "Brute Force Approach" (even if simple), followed by an "Optimized Approach". Never skip the Brute Force approach.
+</coding_interview_rules>
+
 {TEMPORAL_CONTEXT}`;
 
 export const UNIVERSAL_FOLLOW_UP_QUESTIONS_PROMPT = `Generate 3 smart follow-up questions this interview candidate could ask about the current topic.

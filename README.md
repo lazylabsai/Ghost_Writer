@@ -24,6 +24,7 @@
 - **"What to Answer?" Intelligence (Ctrl+J)**: Instantly generate the perfect response to the last question asked. Ghost Writer intelligently parses the conversation context and your provided resume/job description to formulate natural, authentic answers.
 - **Smart Fallback**: Even if a direct question hasn't been asked, pressing "What to Answer?" provides you with an insightful, momentum-building thought based on the last 3 minutes of conversation.
 - **Vision-Aware Responses**: Attach screenshots directly to the context stream for architecture diagrams or coding tests. Ghost Writer uses OCR or native multimodal AI to understand the visual context perfectly.
+- **Live Coding Copilot**: Offers seamless integration with online coding environments. Ghost Writer instantly parses your active editor's boilerplate, ensuring its generated solutions perfectly match the required structure and automatically providing both brute-force and optimized approaches.
 - **Disguise Mode**: Shrink the application UI into an innocent-looking terminal window, a fake system settings popup, or completely hide it with a single keystroke (Ctrl+B).
 - **Air-Gapped Privacy**: Run everything completely offline using Local Whisper for transcription and local Ollama models for generation. Your data never leaves your machine unless you explicitly configure a cloud provider.
 
