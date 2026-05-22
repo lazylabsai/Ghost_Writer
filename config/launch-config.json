@@ -8,7 +8,7 @@
   "monetizationEnabled": false,
   "telemetryDefaultEnabled": false,
   "release": {
-    "owner": "Sasidhar-7302",
+    "owner": "lazylabsai",
     "repo": "Ghost_Writer",
     "tagPrefix": "v",
     "manifestFileName": "release-manifest.json",
@@ -41,9 +41,9 @@
     "gumroadVerifyUrl": "https://api.gumroad.com/v2/licenses/verify"
   },
   "support": {
-    "issuesUrl": "https://github.com/Sasidhar-7302/Ghost_Writer/issues",
-    "downloadsUrl": "https://github.com/Sasidhar-7302/Ghost_Writer/releases",
-    "rawContentBaseUrl": "https://raw.githubusercontent.com/Sasidhar-7302/Ghost_Writer/main",
+    "issuesUrl": "https://github.com/lazylabsai/Ghost_Writer/issues",
+    "downloadsUrl": "https://github.com/lazylabsai/Ghost_Writer/releases",
+    "rawContentBaseUrl": "https://raw.githubusercontent.com/lazylabsai/Ghost_Writer/main",
     "privacyDocPath": "docs/PRIVACY.md",
     "troubleshootingDocPath": "docs/TROUBLESHOOTING.md"
   }
