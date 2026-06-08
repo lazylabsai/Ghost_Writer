@@ -18,7 +18,7 @@ export class InterviewCopilot {
         cleanedTranscript: string,
         temporalContext?: TemporalContext,
         intentResult?: IntentResult,
-        imagePath?: string,
+        imagePaths?: string[],
         signal?: AbortSignal
     ): AsyncGenerator<string> {
         try {
@@ -69,7 +69,7 @@ export class InterviewCopilot {
 
             const stream = this.llmHelper.streamChat({
                 message: fullMessage,
-                imagePath: imagePath,
+                imagePaths: imagePaths,
                 systemPrompt: prompt,
                 signal
             });

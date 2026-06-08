@@ -67,10 +67,10 @@ export const STT_PROVIDERS: Record<SttProviderId, SttProviderConfig> = {
     },
     deepgram: {
         id: 'deepgram',
-        name: 'Deepgram Nova-2',
+        name: 'Deepgram Nova-3',
         description: 'Real-time streaming transcription via Deepgram WebSocket',
         endpoint: 'wss://api.deepgram.com/v1/listen',
-        model: 'nova-2',
+        model: 'nova-3',
         uploadType: 'websocket',
         authHeader: (apiKey: string) => ({
             Authorization: `Token ${apiKey}`,

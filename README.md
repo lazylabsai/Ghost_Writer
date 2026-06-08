@@ -73,6 +73,7 @@ More detail: [Privacy](docs/PRIVACY.md)
 - **Ctrl+J**: Instantly trigger the "What to answer?" feature.
 - **Ctrl+B**: Rapidly hide or show the Ghost Overlay.
 - **Ctrl+Shift+H**: Activate Disguise Mode (morph the app into a terminal or settings window).
+- **Ctrl+M**: Toggle Click-Through Mode (ignore mouse events to interact with apps behind the overlay).
 
 ## 🧑‍💻 Manual Development
 

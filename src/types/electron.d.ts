@@ -97,8 +97,8 @@ export interface ElectronAPI {
 
   // Intelligence Mode IPC
   generateAssist: () => Promise<{ insight: string | null }>
-  generateWhatToSay: (question?: string, imagePath?: string) => Promise<{ answer: string | null; question?: string; error?: string }>
-  generateFollowUp: (intent: string, userRequest?: string, imagePath?: string) => Promise<{ refined: string | null; intent: string }>
+  generateWhatToSay: (question?: string, imagePaths?: string[]) => Promise<{ answer: string | null; question?: string; error?: string }>
+  generateFollowUp: (intent: string, userRequest?: string, imagePaths?: string[]) => Promise<{ refined: string | null; intent: string }>
   generateFollowUpQuestions: (imagePath?: string) => Promise<{ questions: string | null }>
   generateRecap: () => Promise<{ summary: string | null }>
   submitManualQuestion: (question: string) => Promise<{ answer: string | null; question: string }>
@@ -229,6 +229,9 @@ export interface ElectronAPI {
   getPromptSettings: () => Promise<Record<string, { defaultPromptId: string; extraInstructions?: string; fullOverride?: string; enabled: boolean; validation?: { isValid: boolean; error?: string } }>>
   updatePromptSettings: (mode: string, patch: { extraInstructions?: string; fullOverride?: string; enabled?: boolean }) => Promise<{ success: boolean; error?: string }>
   getDefaultPromptTemplates: () => Promise<Record<string, { id: string; title: string; description: string; sessionMode: 'interview' | 'meeting' | 'global'; prompt: string }>>
+  updateGlobalInstructions: (sessionMode: 'interview' | 'meeting', instructions: string) => Promise<{ success: boolean; error?: string }>
+  getGlobalInstructions: () => Promise<{ globalInterviewInstructions: string; globalMeetingInstructions: string }>
+  getDefaultGlobalInstructions: () => Promise<{ globalInterviewInstructions: string; globalMeetingInstructions: string }>
   getCustomPrompts: () => Promise<{ interviewPrompt: string | null; meetingPrompt: string | null }>
   setCustomPrompt: (type: 'interview' | 'meeting', prompt: string) => Promise<{ success: boolean; error?: string }>
   getDefaultPrompts: () => Promise<{ interviewPrompt: string; meetingPrompt: string }>

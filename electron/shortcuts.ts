@@ -258,12 +258,8 @@ export class ShortcutsHelper {
     for (const window of candidateWindows) {
       window.webContents.send("quick-answer");
     }
-
-    try {
-      await this.appState.getIntelligenceManager().runWhatShouldISay();
-    } catch (error) {
-      console.error("[Shortcuts] Quick answer failed:", error);
-    }
+    // Execution is now fully delegated to the frontend (GhostWriterInterface.tsx) via the quick-answer IPC
+    // This ensures the frontend can clear attached screenshots and render the user chat bubble.
   }
 
   private handleToggleVisibility(): void {

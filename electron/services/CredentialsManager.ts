@@ -75,6 +75,11 @@ export interface StoredCredentials {
     // Stealth Mode
     isUndetectable?: boolean;
     disguiseMode?: string;
+    // Prompt versioning
+    promptVersion?: number;
+    // Global Instructions
+    globalInterviewInstructions?: string;
+    globalMeetingInstructions?: string;
 }
 
 export class CredentialsManager {
@@ -176,11 +181,18 @@ export class CredentialsManager {
     }
 
     public getSttProvider(): 'google' | 'groq' | 'openai' | 'deepgram' | 'elevenlabs' | 'azure' | 'ibmwatson' | 'local-whisper' {
-        return this.credentials.sttProvider || 'google';
+        if (this.credentials.sttProvider) {
+            return this.credentials.sttProvider;
+        }
+        const envProvider = process.env.STT_PROVIDER;
+        if (envProvider && ['google', 'groq', 'openai', 'deepgram', 'elevenlabs', 'azure', 'ibmwatson', 'local-whisper'].includes(envProvider)) {
+            return envProvider as any;
+        }
+        return 'google';
     }
 
     public getDeepgramApiKey(): string | undefined {
-        return this.credentials.deepgramApiKey;
+        return this.credentials.deepgramApiKey || process.env.DEEPGRAM_API_KEY;
     }
 
     public getGroqSttApiKey(): string | undefined {
@@ -560,12 +572,23 @@ export class CredentialsManager {
     }
 
     public updatePromptSetting(mode: PromptMode, patch: Partial<PromptSettings>): void {
-        const currentSettings = this.getPromptSettings();
-        currentSettings[mode] = {
-            ...currentSettings[mode],
-            ...patch,
-        };
-        this.credentials.promptSettings = normalizePromptSettings(currentSettings);
+        const current = this.credentials.promptSettings?.[mode] || { enabled: true, defaultPromptId: '' };
+        const updated = { ...current, ...patch };
+        
+        if (!this.credentials.promptSettings) {
+            this.credentials.promptSettings = {};
+        }
+        
+        this.credentials.promptSettings[mode] = updated;
+        this.saveCredentials();
+    }
+
+    public updateGlobalInstructions(sessionMode: 'interview' | 'meeting', instructions: string): void {
+        if (sessionMode === 'interview') {
+            this.credentials.globalInterviewInstructions = instructions;
+        } else {
+            this.credentials.globalMeetingInstructions = instructions;
+        }
         this.saveCredentials();
     }
 
@@ -679,11 +702,66 @@ export class CredentialsManager {
             promptSettings.answer.fullOverride = legacyMeetingPrompt;
         }
 
+        // Clean up legacy Chintu branding in saved overrides
+        let migratedAny = false;
+        for (const mode of Object.keys(promptSettings) as PromptMode[]) {
+            const settings = promptSettings[mode];
+            if (settings && settings.fullOverride) {
+                let updatedOverride = settings.fullOverride;
+                if (updatedOverride.includes('Chintu AI Team')) {
+                    updatedOverride = updatedOverride.replaceAll('Chintu AI Team', 'LaZy Labs');
+                    migratedAny = true;
+                }
+                if (updatedOverride.includes('Chintu AI')) {
+                    updatedOverride = updatedOverride.replaceAll('Chintu AI', 'LaZy Labs');
+                    migratedAny = true;
+                }
+                if (updatedOverride.includes('Chintu')) {
+                    updatedOverride = updatedOverride.replaceAll('Chintu', 'LaZy');
+                    migratedAny = true;
+                }
+                settings.fullOverride = updatedOverride;
+            }
+        }
+
         this.credentials.promptSettings = promptSettings;
         this.credentials.telemetryEnabled = this.credentials.telemetryEnabled ?? launchConfig.telemetryDefaultEnabled;
         this.credentials.licenseStatus = this.credentials.licenseStatus || (launchConfig.monetizationEnabled ? 'trial' : 'beta');
 
         delete this.credentials.interviewPrompt;
         delete this.credentials.meetingPrompt;
+
+        if (migratedAny) {
+            try {
+                this.saveCredentials();
+                console.log('[CredentialsManager] Successfully migrated legacy Chintu branding in prompt overrides to LaZy Labs and saved');
+            } catch (err) {
+                console.error('[CredentialsManager] Failed to auto-save migrated credentials:', err);
+            }
+        }
+
+        // V2 Migration: Clear stale fullOverride prompts so updated defaults take effect
+        const currentPromptVersion = 2;
+        if (!this.credentials.promptVersion || this.credentials.promptVersion < currentPromptVersion) {
+            const interviewModes: PromptMode[] = ['whatToAnswer', 'answer', 'followUpRefinement', 'followUpQuestions'];
+            let clearedAny = false;
+            for (const mode of interviewModes) {
+                if (promptSettings[mode]?.fullOverride?.trim()) {
+                    console.log(`[CredentialsManager] Clearing stale fullOverride for "${mode}" to use updated default prompt`);
+                    promptSettings[mode].fullOverride = '';
+                    clearedAny = true;
+                }
+            }
+            this.credentials.promptVersion = currentPromptVersion;
+            this.credentials.promptSettings = promptSettings;
+            if (clearedAny) {
+                try {
+                    this.saveCredentials();
+                    console.log('[CredentialsManager] V2 migration: cleared stale prompt overrides and saved');
+                } catch (err) {
+                    console.error('[CredentialsManager] Failed to save V2 migration:', err);
+                }
+            }
+        }
     }
 }

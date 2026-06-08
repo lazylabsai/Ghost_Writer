@@ -25,7 +25,8 @@ import {
     Link,
     Code,
     Copy,
-    Check
+    Check,
+    Info
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -153,6 +154,7 @@ const GhostWriterInterface: React.FC<GhostWriterInterfaceProps> = ({ onEndMeetin
     const [isConnected, setIsConnected] = useState(false);
     const [isProcessing, setIsProcessing] = useState(false);
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+    const [isShortcutsOpen, setIsShortcutsOpen] = useState(false);
     const [conversationContext, setConversationContext] = useState<string>('');
     const [isManualRecording, setIsManualRecording] = useState(false);
     const isRecordingRef = useRef(false);  // Ref to track recording state (avoids stale closure)
@@ -340,11 +342,14 @@ const GhostWriterInterface: React.FC<GhostWriterInterfaceProps> = ({ onEndMeetin
     }, []);
 
     // Auto-scroll
+    const prevIsProcessing = useRef(false);
     useEffect(() => {
-        if (isExpanded) {
+        if (isExpanded && isProcessing && !prevIsProcessing.current) {
+            // Scroll to bottom once when a new response starts streaming
             messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
         }
-    }, [messages, isExpanded, isProcessing]);
+        prevIsProcessing.current = isProcessing;
+    }, [isExpanded, isProcessing]);
 
     // Auto-scroll transcript panel
     useEffect(() => {
@@ -393,11 +398,15 @@ const GhostWriterInterface: React.FC<GhostWriterInterfaceProps> = ({ onEndMeetin
         return () => unsubscribe();
     }, []);
 
+    // Keep a fresh reference to handleWhatToSay to avoid stale closures in the useEffect
+    const handleWhatToSayRef = useRef<() => void>();
+
     // Quick Answer shortcut (Ctrl+J) — expand and trigger "What to answer"
     useEffect(() => {
         if (!window.electronAPI?.onQuickAnswer) return;
         const unsubscribe = window.electronAPI.onQuickAnswer(() => {
             setIsExpanded(true);
+            handleWhatToSayRef.current?.();
         });
         return () => unsubscribe();
     }, []);
@@ -823,7 +832,7 @@ const GhostWriterInterface: React.FC<GhostWriterInterfaceProps> = ({ onEndMeetin
         }
 
         return () => cleanups.forEach(fn => fn());
-    }, [isExpanded]);
+    }, [isExpanded, currentModel]);
 
     // Quick Actions - Updated to use new Intelligence APIs
 
@@ -857,8 +866,9 @@ const GhostWriterInterface: React.FC<GhostWriterInterfaceProps> = ({ onEndMeetin
         }
 
         try {
-            // Pass first imagePath for this action
-            await window.electronAPI.generateWhatToSay(undefined, currentAttachments[0]?.path);
+            // Pass all attached image paths for this action
+            const imagePaths = currentAttachments.map(a => a.path);
+            await window.electronAPI.generateWhatToSay(undefined, imagePaths);
         } catch (err) {
             setMessages(prev => [...prev, {
                 id: Date.now().toString(),
@@ -870,13 +880,18 @@ const GhostWriterInterface: React.FC<GhostWriterInterfaceProps> = ({ onEndMeetin
         }
     };
 
+    useEffect(() => {
+        handleWhatToSayRef.current = handleWhatToSay;
+    }, [handleWhatToSay]);
+
     const handleFollowUp = async (intent: string = 'rephrase') => {
         setIsExpanded(true);
         setIsProcessing(true);
         analytics.trackCommandExecuted('follow_up_' + intent);
 
         try {
-            await window.electronAPI.generateFollowUp(intent, undefined, attachedContext[0]?.path);
+            const imagePaths = attachedContext.map(a => a.path);
+            await window.electronAPI.generateFollowUp(intent, undefined, imagePaths);
         } catch (err) {
             setMessages(prev => [...prev, {
                 id: Date.now().toString(),
@@ -1274,13 +1289,13 @@ Provide only the answer, nothing else.`;
         if (msg.isCode || (msg.role === 'system' && msg.text.includes('```'))) {
             const parts = msg.text.split(/(```[\s\S]*?```)/g);
             return (
-                <div className="bg-white/5 border border-white/10 rounded-lg p-3 my-1">
+                <div className="bg-white/5 border border-white/10 rounded-lg p-3 my-1 w-full max-w-full min-w-0 overflow-hidden flex flex-col">
                     {screenshotPreview}
                     <div className="flex items-center gap-2 mb-2 text-purple-300 font-semibold text-xs uppercase tracking-wide">
                         <Code className="w-3.5 h-3.5" />
                         <span>Code Solution</span>
                     </div>
-                    <div className="space-y-2 text-slate-200 text-[13px] leading-relaxed">
+                    <div className="space-y-2 text-slate-200 text-[13px] leading-relaxed w-full max-w-full min-w-0 overflow-hidden">
                         {parts.map((part, i) => {
                             if (part.startsWith('```')) {
                                 const match = part.match(/```(\w+)?\n?([\s\S]*?)```/);
@@ -1288,7 +1303,7 @@ Provide only the answer, nothing else.`;
                                     const lang = match[1] || 'python';
                                     const code = match[2].trim();
                                     return (
-                                        <div key={i} className="my-3 rounded-lg overflow-hidden border border-white/10 shadow-sm bg-[#0f172a]">
+                                        <div key={i} className="my-3 rounded-lg overflow-hidden border border-white/10 shadow-sm bg-[#0f172a] w-full max-w-full min-w-0">
                                             {/* IDE-style Header */}
                                             <div className="bg-[#1e293b] px-3 py-1.5 flex items-center justify-between border-b border-white/5">
                                                 <div className="flex items-center gap-2 text-[10px] uppercase font-bold text-slate-400 font-mono">
@@ -1308,9 +1323,12 @@ Provide only the answer, nothing else.`;
                                                     fontSize: '12px',
                                                     background: 'transparent',
                                                     padding: '12px',
-                                                    fontFamily: 'JetBrains Mono, Menlo, monospace'
+                                                    fontFamily: 'JetBrains Mono, Menlo, monospace',
+                                                    overflowX: 'auto',
+                                                    maxWidth: '100%',
+                                                    whiteSpace: 'pre'
                                                 }}
-                                                wrapLongLines={true}
+                                                wrapLongLines={false}
                                                 showLineNumbers={true}
                                                 lineNumberStyle={{ minWidth: '2em', paddingRight: '1em', color: '#475569', textAlign: 'right' }}
                                             >
@@ -1431,12 +1449,12 @@ Provide only the answer, nothing else.`;
             const parts = msg.text.split(/(```[\s\S]*?(?:```|$))/g);
 
             return (
-                <div className="bg-white/5 border border-white/10 rounded-lg p-3 my-1">
+                <div className="bg-white/5 border border-white/10 rounded-lg p-3 my-1 w-full max-w-full min-w-0 overflow-hidden flex flex-col">
                     {screenshotPreview}
                     <div className="flex items-center gap-2 mb-2 text-emerald-400 font-semibold text-xs uppercase tracking-wide">
                         <span>Say this</span>
                     </div>
-                    <div className="text-slate-100 text-[14px] leading-relaxed">
+                    <div className="text-slate-100 text-[14px] leading-relaxed w-full max-w-full min-w-0 overflow-hidden">
                         {parts.map((part, i) => {
                             if (part.startsWith('```')) {
                                 // Robust matching: handles unclosed blocks for streaming (```...$)
@@ -1455,7 +1473,7 @@ Provide only the answer, nothing else.`;
                                     }
 
                                     return (
-                                        <div key={i} className="my-3 rounded-lg overflow-hidden border border-white/10 shadow-sm bg-[#0f172a]">
+                                        <div key={i} className="my-3 rounded-lg overflow-hidden border border-white/10 shadow-sm bg-[#0f172a] w-full max-w-full min-w-0">
                                             {/* IDE-style Header */}
                                             <div className="bg-[#1e293b] px-3 py-1.5 flex items-center justify-between border-b border-white/5">
                                                 <div className="flex items-center gap-2 text-[10px] uppercase font-bold text-slate-400 font-mono">
@@ -1476,9 +1494,12 @@ Provide only the answer, nothing else.`;
                                                     fontSize: '12px',
                                                     background: 'transparent',
                                                     padding: '12px',
-                                                    fontFamily: 'JetBrains Mono, Menlo, monospace'
+                                                    fontFamily: 'JetBrains Mono, Menlo, monospace',
+                                                    overflowX: 'auto',
+                                                    maxWidth: '100%',
+                                                    whiteSpace: 'pre'
                                                 }}
-                                                wrapLongLines={true}
+                                                wrapLongLines={false}
                                                 showLineNumbers={true}
                                                 lineNumberStyle={{ minWidth: '2em', paddingRight: '1em', color: '#475569', textAlign: 'right' }}
                                             >
@@ -1543,7 +1564,7 @@ Provide only the answer, nothing else.`;
     };
 
     return (
-        <div ref={contentRef} className={`flex flex-col items-center w-fit mx-auto h-fit min-h-0 bg-transparent p-0 rounded-[24px] font-sans text-slate-200 gap-2 transition-all duration-300 ${isClickThrough ? 'ring-2 ring-yellow-400 ring-offset-2 ring-offset-black/50 pointer-events-none' : ''}`}>
+        <div ref={contentRef} className={`flex flex-col items-center w-fit mx-auto h-fit min-h-0 bg-transparent p-0 rounded-[24px] font-sans text-slate-200 gap-2 transition-all duration-300 ${isClickThrough ? 'ring-2 ring-white/40 ring-offset-2 ring-offset-black/20 pointer-events-none' : ''}`}>
             
             {/* Click-Through Mode Badge */}
             <AnimatePresence>
@@ -1625,11 +1646,11 @@ Provide only the answer, nothing else.`;
                                 <div className="w-[60%] flex flex-col">
                                     {/* Chat History */}
                                     {(messages.length > 0 || isManualRecording || isProcessing) && (
-                                        <div className="flex-1 overflow-y-auto p-4 space-y-3 max-h-[clamp(300px,35vh,450px)]" style={{ scrollbarWidth: 'none' }}>
+                                        <div className="flex-1 overflow-y-auto p-4 space-y-3 max-h-[clamp(300px,35vh,450px)]" style={{ scrollbarWidth: 'thin', scrollbarColor: '#334155 transparent' }}>
                                             {messages.map((msg) => (
-                                                <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-fade-in-up`}>
+                                                <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-fade-in-up w-full min-w-0`}>
                                                     <div className={`
-                          ${msg.role === 'user' ? 'max-w-[72.25%] px-[13.6px] py-[10.2px]' : 'max-w-[85%] px-4 py-3'} text-[14px] leading-relaxed relative group whitespace-pre-wrap
+                          ${msg.role === 'user' ? 'max-w-[72.25%] px-[13.6px] py-[10.2px]' : 'w-full max-w-[85%] min-w-0 px-4 py-3'} text-[14px] leading-relaxed relative group whitespace-pre-wrap
                           ${msg.role === 'user'
                                                             ? 'bg-blue-600/20 backdrop-blur-md border border-blue-500/30 text-blue-100 rounded-[20px] rounded-tr-[4px] shadow-sm font-medium'
                                                             : ''
@@ -1939,6 +1960,65 @@ Provide only the answer, nothing else.`;
                                             >
                                                 <SlidersHorizontal className="w-3.5 h-3.5" />
                                             </button>
+                                        </div>
+
+                                        {/* Shortcuts Info Popover */}
+                                        <div className="relative">
+                                            <button
+                                                onClick={() => setIsShortcutsOpen(!isShortcutsOpen)}
+                                                className={`
+                                            w-7 h-7 flex items-center justify-center rounded-lg 
+                                            interaction-base interaction-press
+                                            ${isShortcutsOpen ? 'text-white bg-white/10' : 'text-slate-500 hover:text-slate-300 hover:bg-white/5'}
+                                        `}
+                                                title="View Keyboard Shortcuts"
+                                            >
+                                                <Info className="w-3.5 h-3.5" />
+                                            </button>
+
+                                            <AnimatePresence>
+                                                {isShortcutsOpen && (
+                                                    <motion.div
+                                                        initial={{ opacity: 0, y: 8, scale: 0.95 }}
+                                                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                                                        exit={{ opacity: 0, y: 8, scale: 0.95 }}
+                                                        transition={{ duration: 0.15, ease: "easeOut" }}
+                                                        className="absolute bottom-9 left-1/2 -translate-x-1/2 bg-[#18181a]/95 backdrop-blur-xl border border-white/10 rounded-2xl p-4 shadow-[0_20px_50px_rgba(0,0,0,0.6)] z-50 w-[280px] text-left"
+                                                    >
+                                                        <div className="flex items-center justify-between mb-3 border-b border-white/5 pb-2">
+                                                            <span className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                                                                <Zap className="w-3 h-3 text-yellow-400" /> Keyboard Shortcuts
+                                                            </span>
+                                                            <button 
+                                                                onClick={() => setIsShortcutsOpen(false)}
+                                                                className="text-slate-500 hover:text-slate-300 transition-colors"
+                                                            >
+                                                                <X className="w-3 h-3" />
+                                                            </button>
+                                                        </div>
+                                                        <div className="space-y-2.5 max-h-[220px] overflow-y-auto pr-1" style={{ scrollbarWidth: 'thin', scrollbarColor: '#334155 transparent' }}>
+                                                            {[
+                                                                { label: 'What To Answer', key: 'Ctrl+J / F8' },
+                                                                { label: 'Take Screenshot', key: activeShortcut },
+                                                                { label: 'Click-Through Mode', key: 'Ctrl+M' },
+                                                                { label: 'Toggle Overlay Window', key: 'Ctrl+B / Alt+G' },
+                                                                { label: 'Show/Center Window', key: 'Ctrl+Shift+Space' },
+                                                                { label: 'Force Process Shot', key: 'Ctrl+Enter' },
+                                                                { label: 'Reset/Cancel AI', key: 'Ctrl+R / Alt+C' },
+                                                                { label: 'Start/End Session', key: 'F9' },
+                                                                { label: 'Move Window', key: 'Ctrl+Arrows' }
+                                                            ].map((shortcut, idx) => (
+                                                                <div key={idx} className="flex items-center justify-between text-[11px]">
+                                                                    <span className="text-slate-400 font-medium">{shortcut.label}</span>
+                                                                    <kbd className="bg-white/5 border border-white/10 px-2 py-0.5 rounded text-[10px] text-slate-200 font-mono tracking-wide">
+                                                                        {shortcut.key}
+                                                                    </kbd>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    </motion.div>
+                                                )}
+                                            </AnimatePresence>
                                         </div>
 
                                     </div>

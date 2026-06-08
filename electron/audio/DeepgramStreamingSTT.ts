@@ -1,5 +1,5 @@
 /**
- * DeepgramStreamingSTT - WebSocket-based streaming Speech-to-Text using Deepgram Nova-2
+ * DeepgramStreamingSTT - WebSocket-based streaming Speech-to-Text using Deepgram Nova-3
  *
  * Implements the same EventEmitter interface as GoogleSTT:
  *   Events: 'transcript' ({ text, isFinal, confidence }), 'error' (Error)
@@ -14,7 +14,7 @@ import WebSocket from 'ws';
 
 const RECONNECT_BASE_DELAY_MS = 1000;
 const RECONNECT_MAX_DELAY_MS = 30000;
-const KEEPALIVE_INTERVAL_MS = 15000;
+const KEEPALIVE_INTERVAL_MS = 3000;
 
 export class DeepgramStreamingSTT extends EventEmitter {
     private apiKey: string;
@@ -109,7 +109,7 @@ export class DeepgramStreamingSTT extends EventEmitter {
     private connect(): void {
         const url =
             `wss://api.deepgram.com/v1/listen` +
-            `?model=nova-2` +
+            `?model=nova-3` +
             `&encoding=linear16` +
             `&sample_rate=${this.sampleRate}` +
             `&channels=${this.numChannels}` +
@@ -202,8 +202,8 @@ export class DeepgramStreamingSTT extends EventEmitter {
         this.keepAliveTimer = setInterval(() => {
             if (this.ws?.readyState === WebSocket.OPEN) {
                 try {
-                    // Send a WebSocket ping frame to keep the connection alive
-                    this.ws.ping();
+                    // Send a Deepgram-specific KeepAlive message to avoid connection timeouts
+                    this.ws.send(JSON.stringify({ type: 'KeepAlive' }));
                 } catch {
                     // Ignore errors
                 }

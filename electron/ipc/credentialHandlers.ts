@@ -428,6 +428,39 @@ export function registerCredentialHandlers(appState: AppState): void {
     }
   });
 
+  ipcMain.handle("update-global-instructions", async (_, sessionMode: 'interview' | 'meeting', instructions: string) => {
+    try {
+      const { CredentialsManager } = require('../services/CredentialsManager');
+      CredentialsManager.getInstance().updateGlobalInstructions(sessionMode, instructions);
+      return { success: true };
+    } catch (error: any) {
+      console.error(`Error updating global instructions for \${sessionMode}:`, error);
+      return { success: false, error: error.message };
+    }
+  });
+  ipcMain.handle("get-default-global-instructions", async () => {
+    const { DEFAULT_GLOBAL_INTERVIEW_INSTRUCTIONS, DEFAULT_GLOBAL_MEETING_INSTRUCTIONS } = require('../llm/promptRegistry');
+    return { 
+      globalInterviewInstructions: DEFAULT_GLOBAL_INTERVIEW_INSTRUCTIONS, 
+      globalMeetingInstructions: DEFAULT_GLOBAL_MEETING_INSTRUCTIONS 
+    };
+  });
+
+  ipcMain.handle("get-global-instructions", async () => {
+    try {
+      const { CredentialsManager } = require('../services/CredentialsManager');
+      const { DEFAULT_GLOBAL_INTERVIEW_INSTRUCTIONS, DEFAULT_GLOBAL_MEETING_INSTRUCTIONS } = require('../llm/promptRegistry');
+      const creds = CredentialsManager.getInstance().getAllCredentials();
+      return { 
+        globalInterviewInstructions: creds.globalInterviewInstructions ?? DEFAULT_GLOBAL_INTERVIEW_INSTRUCTIONS, 
+        globalMeetingInstructions: creds.globalMeetingInstructions ?? DEFAULT_GLOBAL_MEETING_INSTRUCTIONS 
+      };
+    } catch (error: any) {
+      console.error("Error getting global instructions:", error);
+      return { globalInterviewInstructions: '', globalMeetingInstructions: '' };
+    }
+  });
+
   ipcMain.handle("get-default-prompt-templates", async () => {
     try {
       const { getDefaultPromptTemplates } = require('../llm/promptRegistry');

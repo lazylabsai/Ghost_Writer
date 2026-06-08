@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-    Upload, FileText, Trash2, Check, AlertCircle, Save,
+    Upload, FileText, Trash2, Check, AlertCircle,
     RotateCcw, Terminal, Briefcase, FileJson,
     ClipboardList, Target
 } from 'lucide-react';
@@ -9,91 +9,8 @@ interface SessionSettingsProps {
     mode: 'interview' | 'meeting';
 }
 
-type PromptMode =
-    | 'assist'
-    | 'answer'
-    | 'whatToAnswer'
-    | 'followUpRefinement'
-    | 'followUpQuestions'
-    | 'recap'
-    | 'ragMeeting'
-    | 'ragGlobal'
-    | 'imageAnalysis';
-
-interface PromptSettings {
-    defaultPromptId: string;
-    extraInstructions?: string;
-    fullOverride?: string;
-    enabled: boolean;
-    validation?: {
-        isValid: boolean;
-        error?: string;
-    };
-}
-
-interface PromptTemplateDefinition {
-    id: string;
-    title: string;
-    description: string;
-    sessionMode: 'interview' | 'meeting' | 'global';
-    prompt: string;
-}
-
-function getPromptDisplayMeta(
-    sessionMode: 'interview' | 'meeting',
-    promptMode: PromptMode,
-    template?: PromptTemplateDefinition
-): { title: string; description: string } {
-    if (promptMode === 'recap') {
-        return sessionMode === 'meeting'
-            ? {
-                title: 'Meeting Summary',
-                description: 'Post-meeting summary, decisions, blockers, and action-item extraction.'
-            }
-            : {
-                title: 'Interview Debrief',
-                description: 'Post-interview summary, takeaways, and follow-up capture.'
-            };
-    }
-
-    return {
-        title: template?.title || promptMode,
-        description: template?.description || 'Customize the runtime prompt.'
-    };
-}
-
-const EDITABLE_SESSION_PROMPT_MODES: Record<'interview' | 'meeting', PromptMode[]> = {
-    interview: ['whatToAnswer', 'answer', 'recap'],
-    meeting: ['answer', 'assist', 'recap']
-};
-
-function getEditorValueForMode(
-    promptMode: PromptMode,
-    settings: Record<string, PromptSettings>,
-    templates: Record<string, PromptTemplateDefinition>
-): string {
-    const selectedSettings = settings[promptMode];
-    const bundledPrompt = templates[promptMode]?.prompt || '';
-
-    if (selectedSettings?.fullOverride?.trim()) {
-        return selectedSettings.fullOverride;
-    }
-
-    if (selectedSettings?.extraInstructions?.trim()) {
-        return `${bundledPrompt}\n\n<user_extra_instructions>\n${selectedSettings.extraInstructions.trim()}\n</user_extra_instructions>`;
-    }
-
-    return bundledPrompt;
-}
-
 export const SessionSettings: React.FC<SessionSettingsProps> = ({ mode }) => {
-    const editablePromptModes = EDITABLE_SESSION_PROMPT_MODES[mode];
-
-    const [promptSettings, setPromptSettings] = useState<Record<string, PromptSettings>>({});
-    const [promptTemplates, setPromptTemplates] = useState<Record<string, PromptTemplateDefinition>>({});
-    const [promptDrafts, setPromptDrafts] = useState<Record<string, string>>({});
-    const [selectedPromptMode, setSelectedPromptMode] = useState<PromptMode>(editablePromptModes[0]);
-
+    const [globalInstructions, setGlobalInstructions] = useState('');
     const [contextFile1, setContextFile1] = useState('');
     const [contextFile2, setContextFile2] = useState('');
 
@@ -110,34 +27,16 @@ export const SessionSettings: React.FC<SessionSettingsProps> = ({ mode }) => {
         loadData();
     }, [mode]);
 
-    useEffect(() => {
-        setSelectedPromptMode(editablePromptModes[0]);
-    }, [mode]);
-
-    useEffect(() => {
-        if (!editablePromptModes.every((promptMode) => !!promptTemplates[promptMode])) {
-            return;
-        }
-
-        const nextDrafts: Record<string, string> = {};
-        for (const promptMode of editablePromptModes) {
-            nextDrafts[promptMode] = getEditorValueForMode(promptMode, promptSettings, promptTemplates);
-        }
-        setPromptDrafts(nextDrafts);
-    }, [mode, promptSettings, promptTemplates]);
-
     const loadData = async () => {
         try {
             setLoading(true);
 
-            const [storedPromptSettings, templates, docs] = await Promise.all([
-                window.electronAPI.getPromptSettings(),
-                window.electronAPI.getDefaultPromptTemplates(),
+            const [globalInsts, docs] = await Promise.all([
+                window.electronAPI.getGlobalInstructions(),
                 window.electronAPI.getContextDocuments()
             ]);
 
-            setPromptSettings(storedPromptSettings);
-            setPromptTemplates(templates);
+            setGlobalInstructions(isInterview ? globalInsts.globalInterviewInstructions : globalInsts.globalMeetingInstructions);
 
             if (isInterview) {
                 setContextFile1(docs.resumeText || '');
@@ -154,69 +53,28 @@ export const SessionSettings: React.FC<SessionSettingsProps> = ({ mode }) => {
         }
     };
 
-    const handlePromptDraftChange = (promptMode: PromptMode, value: string) => {
-        setPromptDrafts((prev) => ({
-            ...prev,
-            [promptMode]: value
-        }));
-    };
-
-    // Auto-save logic for prompts
+    // Auto-save logic for global instructions
     useEffect(() => {
-        if (loading || !hasLoadedPromptTemplates) return;
+        if (loading) return;
 
         const timer = setTimeout(async () => {
-            const changedModes = editablePromptModes.filter(mode => {
-                const bundledPrompt = promptTemplates[mode]?.prompt || '';
-                const draft = promptDrafts[mode] ?? bundledPrompt;
-                const currentOverride = promptSettings[mode]?.fullOverride || '';
-                const normalizedDraft = draft.trim();
-                const normalizedBundledPrompt = bundledPrompt.trim();
-                const expectedOverride = normalizedDraft === normalizedBundledPrompt ? '' : draft;
-                return expectedOverride !== currentOverride;
-            });
-
-            if (changedModes.length === 0) return;
-
             setSaving(true);
             try {
-                const results = await Promise.all(
-                    changedModes.map(async (promptMode) => {
-                        const bundledPrompt = promptTemplates[promptMode]?.prompt || '';
-                        const draft = promptDrafts[promptMode] ?? bundledPrompt;
-                        const normalizedDraft = draft.trim();
-                        const normalizedBundledPrompt = bundledPrompt.trim();
-                        const fullOverride = normalizedDraft === normalizedBundledPrompt ? '' : draft;
-
-                        await window.electronAPI.updatePromptSettings(promptMode, {
-                            extraInstructions: '',
-                            fullOverride
-                        });
-
-                        return { promptMode, fullOverride };
-                    })
-                );
-
-                setPromptSettings(prev => {
-                    const next = { ...prev };
-                    results.forEach(({ promptMode, fullOverride }) => {
-                        next[promptMode] = {
-                            ...(next[promptMode] || { enabled: true, defaultPromptId: promptTemplates[promptMode]?.id || '' }),
-                            fullOverride,
-                            enabled: true
-                        };
-                    });
-                    return next;
-                });
+                const currentStored = await window.electronAPI.getGlobalInstructions();
+                const storedVal = isInterview ? currentStored.globalInterviewInstructions : currentStored.globalMeetingInstructions;
+                
+                if (globalInstructions !== storedVal) {
+                    await window.electronAPI.updateGlobalInstructions(mode, globalInstructions);
+                }
             } catch (err) {
-                console.error('Auto-save prompts failed:', err);
+                console.error('Auto-save instructions failed:', err);
             } finally {
                 setSaving(false);
             }
         }, 1000);
 
         return () => clearTimeout(timer);
-    }, [promptDrafts]);
+    }, [globalInstructions, mode, isInterview, loading]);
 
     // Auto-save logic for context files
     useEffect(() => {
@@ -249,52 +107,18 @@ export const SessionSettings: React.FC<SessionSettingsProps> = ({ mode }) => {
     }, [contextFile1, contextFile2]);
 
     const handleResetPrompts = () => {
-        const nextDrafts: Record<string, string> = {};
-        for (const promptMode of editablePromptModes) {
-            nextDrafts[promptMode] = getEditorValueForMode(promptMode, promptSettings, promptTemplates);
-        }
-        setPromptDrafts(nextDrafts);
+        setGlobalInstructions('');
     };
 
-    const handleUseBundledPrompts = async () => {
+    const handleUseDefault = async () => {
         try {
             setSaving(true);
-
-            const results = await Promise.all(
-                editablePromptModes.map((promptMode) =>
-                    window.electronAPI.updatePromptSettings(promptMode, {
-                        extraInstructions: '',
-                        fullOverride: ''
-                    })
-                )
-            );
-
-            const failedIndex = results.findIndex((result) => !result.success);
-            if (failedIndex !== -1) {
-                const failedMode = editablePromptModes[failedIndex];
-                showStatus('error', `Failed to restore default prompt: ${results[failedIndex].error || failedMode}`);
-                return;
-            }
-
-            const nextPromptSettings = { ...promptSettings };
-            const nextDrafts: Record<string, string> = { ...promptDrafts };
-
-            for (const promptMode of editablePromptModes) {
-                nextPromptSettings[promptMode] = {
-                    ...(promptSettings[promptMode] || { enabled: true, defaultPromptId: promptTemplates[promptMode]?.id || '' }),
-                    defaultPromptId: promptTemplates[promptMode]?.id || '',
-                    extraInstructions: '',
-                    fullOverride: '',
-                    enabled: true
-                };
-                nextDrafts[promptMode] = promptTemplates[promptMode]?.prompt || '';
-            }
-
-            setPromptSettings(nextPromptSettings);
-            setPromptDrafts(nextDrafts);
-            showStatus('success', `${isInterview ? 'Interview' : 'Meeting'} prompts restored to defaults.`);
+            const defaults = await window.electronAPI.getDefaultGlobalInstructions();
+            setGlobalInstructions(isInterview ? defaults.globalInterviewInstructions : defaults.globalMeetingInstructions);
+            showStatus('success', 'Default instructions restored.');
         } catch (error) {
-            showStatus('error', `Error restoring default prompts: ${error}`);
+            console.error('Failed to load default instructions:', error);
+            showStatus('error', 'Failed to restore defaults.');
         } finally {
             setSaving(false);
         }
@@ -370,14 +194,7 @@ export const SessionSettings: React.FC<SessionSettingsProps> = ({ mode }) => {
         setTimeout(() => setStatus({ type: null, message: '' }), 3000);
     };
 
-    const hasLoadedPromptTemplates = editablePromptModes.every((promptMode) => !!promptTemplates[promptMode]);
-    const hasUnsavedPromptChanges = editablePromptModes.some(
-        (promptMode) => (promptDrafts[promptMode] ?? '') !== getEditorValueForMode(promptMode, promptSettings, promptTemplates)
-    );
-    const selectedPromptTemplate = promptTemplates[selectedPromptMode];
-    const selectedPromptMeta = getPromptDisplayMeta(mode, selectedPromptMode, selectedPromptTemplate);
-
-    if (loading && !hasLoadedPromptTemplates) {
+    if (loading) {
         return (
             <div className="flex items-center justify-center h-64 text-text-tertiary">
                 <div className="flex flex-col items-center gap-3">
@@ -398,8 +215,8 @@ export const SessionSettings: React.FC<SessionSettingsProps> = ({ mode }) => {
                 </h2>
                 <p className="text-sm text-text-secondary max-w-2xl leading-relaxed">
                     {isInterview
-                        ? 'Edit the three core interview prompts together and save them in one pass.'
-                        : 'Edit the three core meeting prompts together and save them in one pass.'}
+                        ? 'Provide custom instructions to guide the interviewer agent.'
+                        : 'Provide custom instructions to guide the meeting agent.'}
                 </p>
             </div>
 
@@ -417,8 +234,8 @@ export const SessionSettings: React.FC<SessionSettingsProps> = ({ mode }) => {
                             <Terminal size={24} />
                         </div>
                         <div>
-                            <h3 className="text-lg font-bold text-text-primary tracking-tight">System Prompts</h3>
-                            <p className="text-xs text-text-tertiary mt-0.5">Choose a runtime mode, edit its prompt, then save the full page.</p>
+                            <h3 className="text-lg font-bold text-text-primary tracking-tight">Custom Instructions</h3>
+                            <p className="text-xs text-text-tertiary mt-0.5">These instructions apply across all Ghost Writer modes for this session.</p>
                         </div>
                     </div>
                     <div className="flex gap-3 shrink-0">
@@ -426,63 +243,28 @@ export const SessionSettings: React.FC<SessionSettingsProps> = ({ mode }) => {
                             onClick={handleResetPrompts}
                             className="px-4 py-2 bg-bg-item-surface hover:bg-bg-item-active text-text-secondary hover:text-text-primary rounded-xl text-xs font-bold transition-all border border-border-subtle flex items-center gap-2"
                         >
-                            <RotateCcw size={14} /> Reset
+                            <RotateCcw size={14} /> Clear
                         </button>
                         <button
-                            onClick={handleUseBundledPrompts}
+                            onClick={handleUseDefault}
                             disabled={saving}
                             className="px-4 py-2 bg-accent-primary/10 hover:bg-accent-primary/15 text-accent-primary rounded-xl text-xs font-bold transition-all border border-accent-primary/20 flex items-center gap-2 disabled:opacity-50"
-                            title={`Restore the bundled ${mode} prompts`}
+                            title={`Restore the default instructions`}
                         >
                             Use Default
                         </button>
                     </div>
                 </div>
 
-                <div className="mb-4 flex items-center justify-between gap-4 rounded-2xl border border-border-subtle bg-bg-input/40 px-4 py-4">
-                    <div className="min-w-0 flex-1">
-                        <label className="block text-[11px] font-bold uppercase tracking-[0.24em] text-text-tertiary mb-2">
-                            Runtime Mode
-                        </label>
-                        <select
-                            value={selectedPromptMode}
-                            onChange={(e) => setSelectedPromptMode(e.target.value as PromptMode)}
-                            className="w-full rounded-2xl border border-border-subtle bg-bg-input px-4 py-3 text-sm font-semibold text-text-primary outline-none transition-all focus:border-accent-primary/40 focus:ring-2 focus:ring-accent-primary/20"
-                        >
-                            {editablePromptModes.map((promptMode) => (
-                                <option key={promptMode} value={promptMode}>
-                                    {getPromptDisplayMeta(mode, promptMode, promptTemplates[promptMode]).title}
-                                </option>
-                            ))}
-                        </select>
-                    </div>
-                    <div className="hidden min-w-0 max-w-sm lg:block">
-                        <div className="text-sm font-semibold text-text-primary">
-                            {selectedPromptMeta.title}
-                        </div>
-                        <p className="mt-1 text-xs leading-relaxed text-text-secondary">
-                            {selectedPromptMeta.description}
-                        </p>
-                    </div>
-                </div>
-
                 <div className="rounded-3xl border border-border-subtle bg-bg-input/40 p-5">
-                    <div className="mb-3 lg:hidden">
-                        <div className="text-sm font-semibold text-text-primary">
-                            {selectedPromptMeta.title}
-                        </div>
-                        <p className="mt-1 text-xs text-text-secondary">
-                            {selectedPromptMeta.description}
-                        </p>
-                    </div>
                     <textarea
-                        value={promptDrafts[selectedPromptMode] ?? ''}
-                        onChange={(e) => handlePromptDraftChange(selectedPromptMode, e.target.value)}
-                        placeholder={`Edit the ${selectedPromptMeta.title.toLowerCase()} prompt...`}
-                        className="w-full h-[30rem] bg-bg-input border border-border-subtle rounded-2xl p-6 text-xs font-mono text-text-primary focus:ring-2 focus:ring-accent-primary/20 focus:border-accent-primary/50 outline-none resize-none transition-all scrollbar-thin placeholder:opacity-30"
+                        value={globalInstructions}
+                        onChange={(e) => setGlobalInstructions(e.target.value)}
+                        placeholder={`e.g. Always write code in Python, keep answers under 3 sentences, use a professional tone...`}
+                        className="w-full h-[15rem] bg-bg-input border border-border-subtle rounded-2xl p-6 text-sm text-text-primary focus:ring-2 focus:ring-accent-primary/20 focus:border-accent-primary/50 outline-none resize-none transition-all scrollbar-thin placeholder:opacity-30"
                     />
                     <p className="mt-3 text-[11px] leading-relaxed text-text-tertiary">
-                        Reset restores the last saved page state. Use Default restores the bundled prompts for all three modes on this page. Save Changes writes all three prompts together.
+                        Changes are saved automatically.
                     </p>
                 </div>
             </section>

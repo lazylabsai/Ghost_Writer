@@ -228,6 +228,27 @@
             scroll-behavior: smooth;
         }
 
+        /* Visible Scrollbar for Mobile */
+        #answer-card::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        #answer-card::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.02);
+            border-radius: 10px;
+            margin-top: 10px;
+            margin-bottom: 10px;
+        }
+
+        #answer-card::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 10px;
+        }
+
+        #answer-card::-webkit-scrollbar-thumb:active {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
         .card-header {
             font-size: 0.7rem;
             font-weight: 800;
@@ -470,9 +491,7 @@
                             span.style.opacity = '1';
                         });
 
-                        // Auto-scroll to bottom of card
-                        const card = document.getElementById('answer-card');
-                        card.scrollTop = card.scrollHeight;
+                        // Removed auto-scroll to allow reading from top-down
                         
                     } else if (message.type === 'answer') {
                         // Parse the raw markdown answer into beautifully styled HTML
@@ -481,9 +500,7 @@
                         activeIntent = ''; // Reset for next stream
                         if ('vibrate' in navigator) navigator.vibrate(100);
 
-                        // Scroll to bottom
-                        const card = document.getElementById('answer-card');
-                        card.scrollTop = card.scrollHeight;
+                        // Removed auto-scroll to allow reading from top-down
                     }
                 }
             };

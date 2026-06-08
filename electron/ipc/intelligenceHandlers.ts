@@ -21,10 +21,10 @@ export function registerIntelligenceHandlers(appState: AppState): void {
   });
 
   // MODE 2: What Should I Say (Primary auto-answer)
-  ipcMain.handle("generate-what-to-say", async (_, question?: string, imagePath?: string) => {
+  ipcMain.handle("generate-what-to-say", async (_, question?: string, imagePaths?: string[]) => {
     return rateLimiter.wrap('generate-what-to-say', async () => {
       const intelligenceManager = appState.getIntelligenceManager();
-      const answer = await intelligenceManager.runWhatShouldISay(question, 0.8, imagePath);
+      const answer = await intelligenceManager.runWhatShouldISay(question, 0.8, imagePaths);
       return { answer, question: question || 'inferred from context' };
     }).catch((error: any) => {
       // Return graceful fallback for rate limit or other errors
@@ -34,10 +34,12 @@ export function registerIntelligenceHandlers(appState: AppState): void {
   });
 
   // MODE 3: Follow-Up (Refinement)
-  ipcMain.handle("generate-follow-up", async (_, intent: string, userRequest?: string, imagePath?: string) => {
+  ipcMain.handle("generate-follow-up", async (_, intent: string, userRequest?: string, imagePaths?: string[]) => {
     return rateLimiter.wrap('generate-follow-up', async () => {
       const intelligenceManager = appState.getIntelligenceManager();
-      const refined = await intelligenceManager.runFollowUp(intent, userRequest, imagePath);
+      // Temporarily pass just the first image path to runFollowUp since we haven't updated its signature yet
+      const firstImagePath = imagePaths && imagePaths.length > 0 ? imagePaths[0] : undefined;
+      const refined = await intelligenceManager.runFollowUp(intent, userRequest, firstImagePath);
       return { refined, intent };
     });
   });

@@ -1310,7 +1310,7 @@ const SettingsOverlay: React.FC<SettingsOverlayProps> = ({ isOpen, onClose }) =>
                                                                 { id: 'google', label: 'Google Cloud', badge: 'Default', desc: 'gRPC streaming via Service Account', color: 'blue', icon: <Mic size={14} /> },
                                                                 { id: 'groq', label: 'Groq Whisper', badge: 'Fast', desc: 'Ultra-fast REST transcription', color: 'orange', icon: <Mic size={14} /> },
                                                                 { id: 'openai', label: 'OpenAI Whisper', badge: null, desc: 'OpenAI-compatible Whisper API', color: 'green', icon: <Mic size={14} /> },
-                                                                { id: 'deepgram', label: 'Deepgram Nova-2', badge: 'Accurate', desc: 'High-accuracy REST transcription', color: 'purple', icon: <Mic size={14} /> },
+                                                                { id: 'deepgram', label: 'Deepgram Nova-3', badge: 'Accurate', desc: 'High-accuracy streaming transcription', color: 'purple', icon: <Mic size={14} /> },
                                                                 { id: 'elevenlabs', label: 'ElevenLabs Scribe', badge: null, desc: 'High-quality Scribe v1 API', color: 'teal', icon: <Mic size={14} /> },
                                                                 { id: 'azure', label: 'Azure Speech', badge: null, desc: 'Microsoft Cognitive Services STT', color: 'cyan', icon: <Mic size={14} /> },
                                                                 { id: 'ibmwatson', label: 'IBM Watson', badge: null, desc: 'IBM Watson cloud STT service', color: 'indigo', icon: <Mic size={14} /> },

@@ -150,6 +150,18 @@ const SettingsPopup = () => {
                     </div>
                 </div>
 
+                {/* Click-Through */}
+                <div className="flex items-center justify-between px-3 py-2 hover:bg-white/5 rounded-lg transition-colors duration-200 group cursor-pointer interaction-base interaction-press">
+                    <div className="flex items-center gap-3">
+                        <Zap className="w-3.5 h-3.5 text-slate-500 group-hover:text-slate-300 transition-colors" />
+                        <span className="text-[12px] text-slate-400 group-hover:text-slate-200 transition-colors">Click-Through</span>
+                    </div>
+                    <div className="flex gap-1 opacity-60 group-hover:opacity-100 transition-opacity">
+                        <div className="px-1.5 py-0.5 rounded border border-white/10 bg-white/5 text-[10px] text-slate-500 font-medium">⌘</div>
+                        <div className="px-1.5 py-0.5 rounded border border-white/10 bg-white/5 text-[10px] text-slate-500 font-medium">M</div>
+                    </div>
+                </div>
+
             </div>
         </div>
     );

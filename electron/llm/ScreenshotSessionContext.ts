@@ -151,12 +151,16 @@ If the OCR is missing the question or options, say what is missing instead of in
       return false;
     }
 
-    const explicitPreviousTarget = /\b(previous|last|earlier|above|prior|same|that|it)\b/i.test(normalized);
-    const asksForValidation = /\b(validate|verify|check|review|debug|fix|correct|improve|optimi[sz]e|explain|continue|rework|compare)\b/i.test(normalized);
-    const targetsWork = /\b(code|solution|answer|approach|ocr|screenshot|problem|question|mcq)\b/i.test(normalized);
+    // If the message is relatively short (under 40 words), it is almost certainly a follow-up to the current problem
+    if (normalized.split(/\s+/).length < 40) {
+      return true;
+    }
 
-    return /validate\s+(the\s+)?(previous|last|above|prior)\s+(code|solution|answer)/i.test(normalized)
-      || (explicitPreviousTarget && asksForValidation && targetsWork);
+    // Look for common follow-up question keywords
+    const isFollowUp = /\b(why|how|what|can we|could we|explain|time complexity|space complexity|optimize|better|alternative|O\([1n]|validate|verify|check|review|debug|fix|correct|rework|compare)\b/i.test(normalized);
+    const hasTarget = /\b(previous|last|earlier|above|prior|same|that|it|this|code|solution|answer|approach|ocr|screenshot|problem|question|mcq)\b/i.test(normalized);
+
+    return isFollowUp || hasTarget;
   }
 
   private buildPreviousWorkContext(message: string): string | undefined {

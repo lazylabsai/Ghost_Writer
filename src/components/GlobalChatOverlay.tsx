@@ -229,10 +229,14 @@ const GlobalChatOverlay: React.FC<GlobalChatOverlayProps> = ({
         }
     }, [isOpen]);
 
-    // Auto-scroll to bottom on new messages
+    // Auto-scroll to bottom once when a new query starts, but don't force scroll on every token
+    const prevChatState = useRef<ChatState>('idle');
     useEffect(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }, [messages]);
+        if (chatState === 'waiting_for_llm' && prevChatState.current === 'idle') {
+            messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        }
+        prevChatState.current = chatState;
+    }, [chatState]);
 
     // Submit initial query when overlay opens
     useEffect(() => {

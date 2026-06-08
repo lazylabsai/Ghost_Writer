@@ -261,7 +261,7 @@ export function registerSTTHandlers(appState: AppState): void {
       if (provider === 'deepgram') {
         const WebSocket = require('ws');
         return await new Promise<{ success: boolean; error?: string }>((resolve) => {
-          const url = 'wss://api.deepgram.com/v1/listen?model=nova-2&encoding=linear16&sample_rate=16000&channels=1';
+          const url = 'wss://api.deepgram.com/v1/listen?model=nova-3&encoding=linear16&sample_rate=16000&channels=1';
           const ws = new WebSocket(url, {
             headers: { Authorization: `Token ${apiKey}` },
           });

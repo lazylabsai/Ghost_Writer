@@ -160,7 +160,11 @@ const SetupWizard: React.FC<SetupWizardProps> = ({ onComplete }) => {
             }
             try {
                 setSavingProfile(true);
-                await window.electronAPI.saveUserProfile({ ...profile });
+                const saved = await window.electronAPI.saveUserProfile({ ...profile });
+                if (!saved) {
+                    setProfileError('Failed to save profile. Please try again.');
+                    return;
+                }
             } catch (err) {
                 setProfileError('Failed to synchronize identity.');
                 return;

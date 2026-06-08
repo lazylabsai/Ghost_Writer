@@ -245,6 +245,7 @@ interface ElectronAPI {
   getPromptSettings: () => Promise<any>
   updatePromptSettings: (mode: string, patch: any) => Promise<{ success: boolean; error?: string }>
   getDefaultPromptTemplates: () => Promise<any>
+  updateGlobalInstructions: (sessionMode: 'interview' | 'meeting', instructions: string) => Promise<{ success: boolean; error?: string }>
 }
 
 export const PROCESSING_EVENTS = {
@@ -902,4 +903,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getPromptSettings: () => ipcRenderer.invoke("get-prompt-settings"),
   updatePromptSettings: (mode: string, patch: any) => ipcRenderer.invoke("update-prompt-settings", mode, patch),
   getDefaultPromptTemplates: () => ipcRenderer.invoke("get-default-prompt-templates"),
+  updateGlobalInstructions: (sessionMode: 'interview' | 'meeting', instructions: string) => ipcRenderer.invoke("update-global-instructions", sessionMode, instructions),
+  getGlobalInstructions: () => ipcRenderer.invoke("get-global-instructions"),
+  getDefaultGlobalInstructions: () => ipcRenderer.invoke("get-default-global-instructions"),
 })

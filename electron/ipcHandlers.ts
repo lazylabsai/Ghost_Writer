@@ -352,13 +352,18 @@ export function initializeIpcHandlers(appState: AppState): void {
   });
 
   safeIpcHandle("save-user-profile", async (event, profile: any) => {
-    const result = await DatabaseManager.getInstance().saveUserProfile(profile);
+    const result = DatabaseManager.getInstance().saveUserProfile(profile);
     
-    // Trigger background sync with cloud now that profile is updated
-    const { LicenseManager } = require('./services/LicenseManager');
-    LicenseManager.getInstance().checkLicense().catch((err: any) => {
-      console.warn('[IPC] Failed to background sync profile to cloud:', err.message);
-    });
+    // Trigger background sync with cloud — wrapped in try-catch so it never
+    // crashes the profile-save handler even if LicenseManager fails to load.
+    try {
+      const { LicenseManager } = require('./services/LicenseManager');
+      LicenseManager.getInstance().checkLicense().catch((err: any) => {
+        console.warn('[IPC] Failed to background sync profile to cloud:', err.message);
+      });
+    } catch (err: any) {
+      console.warn('[IPC] LicenseManager unavailable for background sync:', err.message);
+    }
 
     return result;
   });
@@ -911,7 +916,7 @@ export function initializeIpcHandlers(appState: AppState): void {
         // Test Deepgram via WebSocket connection
         const WebSocket = require('ws');
         return await new Promise<{ success: boolean; error?: string }>((resolve) => {
-          const url = 'wss://api.deepgram.com/v1/listen?model=nova-2&encoding=linear16&sample_rate=16000&channels=1';
+          const url = 'wss://api.deepgram.com/v1/listen?model=nova-3&encoding=linear16&sample_rate=16000&channels=1';
           const ws = new WebSocket(url, {
             headers: { Authorization: `Token ${apiKey}` },
           });

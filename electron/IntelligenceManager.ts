@@ -561,16 +561,18 @@ export class IntelligenceManager extends EventEmitter {
      * NEVER returns null - always provides a usable response
      * @param question - Optional explicit question
      * @param confidence - Confidence score (default 0.8)
-     * @param imagePath - Optional path to screenshot for visual context
+     * @param imagePaths - Optional array of paths to screenshots for visual context
      */
-    async runWhatShouldISay(question?: string, confidence: number = 0.8, imagePath?: string): Promise<string | null> {
+    async runWhatShouldISay(question?: string, confidence: number = 0.8, imagePaths?: string[]): Promise<string | null> {
         const now = Date.now();
 
-        // Autowire the latest screenshot captured via Ctrl+H if no explicit image was passed
-        let targetImagePath = imagePath;
+        // Autowire the latest screenshots captured via Ctrl+H if no explicit image was passed
+        let targetImagePaths = imagePaths;
+        let targetImagePath = imagePaths && imagePaths.length > 0 ? imagePaths[0] : undefined;
         if (!targetImagePath && this.currentScreenshots.length > 0) {
             targetImagePath = this.currentScreenshots[this.currentScreenshots.length - 1];
-            console.log(`[IntelligenceManager] Picked up implicit screenshot for WhatShouldISay: ${targetImagePath}`);
+            targetImagePaths = [...this.currentScreenshots];
+            console.log(`[IntelligenceManager] Picked up implicit screenshots for WhatShouldISay`);
         }
 
         // Cooldown check
@@ -635,6 +637,14 @@ export class IntelligenceManager extends EventEmitter {
                 this.assistantResponseHistory.length
             );
 
+            // If an image was manually provided/captured, let the LLM analyze the screenshot content
+            // to determine whether it's a coding problem, system design diagram, MCQ, or error.
+            // Don't blindly force 'coding' — system design whiteboards need different handling.
+            if (targetImagePath) {
+                intentResult.answerShape = 'Analyze the screenshot carefully. If the screenshot explicitly asks you to design a system "from scratch" or "from ground up", YOU MUST output EXACTLY these 6 markdown headers:\n"### Step 1: Requirements Clarification" -> 3-4 clarifying questions to ask the interviewer.\n"### Step 2: Back-of-Envelope Estimation" -> Quick math estimates for scale (QPS, storage, QPD).\n"### Step 3: High-Level Design" -> Major components and how they connect.\n"### Step 4: Deep Dive" -> Detailed design of 1-2 critical components with data model/schemas and API endpoints.\n"### Step 5: Scaling & Trade-offs" -> How to handle 10x/100x growth (sharding, caching, ACID vs eventual consistency).\n"### Step 6: Bottlenecks & Monitoring" -> Single points of failure and key metrics to monitor.\nIf it does not explicitly specify "from scratch" or "from ground up", skip the 6 steps and answer directly based on what is asked. If it contains a multiple-choice question (MCQ), skip the 7 steps: provide the correct answer immediately with a brief explanation. If it is a NEW coding problem description, YOU MUST output EXACTLY these 7 markdown headers, in this exact order, without skipping any:\n"### Step 1: Restate the Problem" -> 2-3 sentences paraphrasing the problem out loud to the interviewer. Highlight the key insight.\n"### Step 2: Clarifying Questions" -> 2-3 short, relevant clarifying questions to ask the interviewer before coding.\n"### Step 3: Assumptions" -> 1-2 sentences stating your assumptions (e.g. constraints, inputs, edge cases).\n"### Step 4: Brute Force Approach" -> First, write a 1-2 sentence explanation of what you will say to the interviewer BEFORE coding. Then, write clean, commented code in a markdown block. Then, write a brief line-by-line explanation of the code, and state Time and Space Complexity.\n"### Step 5: Optimized Approach" -> First, write a 1-2 sentence explanation of the key optimization insight to tell the interviewer. Then, write clean, commented code. Then, write a brief line-by-line explanation, and state Time and Space Complexity.\n"### Step 6: Dry Run" -> Trace through the sample inputs step-by-step with variable values.\n"### Step 7: Pythonic Solution" -> Provide a short, built-in solution using Python\'s libraries (bonus).\nAll code must include short inline comments explaining the WHY. Write responses exactly as you would speak to the interviewer in a real interview — conversational, using first-person ("I", "my"), and natural. If it is a FOLLOW-UP coding question or error debugging, skip the 7 steps and answer directly.';
+                intentResult.confidence = 1.0;
+            }
+
             const isMeetingMode = CredentialsManager.getInstance().getIsMeetingMode();
             const cancellationToken = new AbortController();
             this.assistCancellationToken = cancellationToken;
@@ -647,7 +657,7 @@ export class IntelligenceManager extends EventEmitter {
                     preparedTranscript,
                     temporalContext,
                     intentResult,
-                    targetImagePath,
+                    targetImagePaths,
                     cancellationToken.signal
                 );
             } else {
@@ -655,7 +665,7 @@ export class IntelligenceManager extends EventEmitter {
                     preparedTranscript,
                     temporalContext,
                     intentResult,
-                    targetImagePath,
+                    targetImagePaths,
                     cancellationToken.signal
                 );
             }
