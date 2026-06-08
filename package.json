@@ -10,7 +10,7 @@
     "build": "npm run clean && tsc && vite build",
     "build:desktop": "npm run clean && tsc && vite build && tsc -p electron/tsconfig.json",
     "preview": "vite preview",
-    "postinstall": "cross-env SHARP_IGNORE_GLOBAL_LIBVIPS=1 npm rebuild sharp && node -e \"const v=require('./node_modules/electron/package.json').version;require('child_process').execSync('npx --yes @electron/rebuild -v '+v+' -m . --only better-sqlite3',{stdio:'inherit'})\"",
+    "postinstall": "node scripts/postinstall.js",
     "electron:dev": "rimraf dist-electron && tsc -p electron/tsconfig.json && node scripts/run_electron_dev.js",
     "electron:build": "tsc -p electron/tsconfig.json && cross-env NODE_ENV=production electron .",
     "app:dev": "node scripts/app_dev.js",
@@ -136,6 +136,7 @@
     "npm": ">=10"
   },
   "devDependencies": {
+    "@electron/rebuild": "^4.0.4",
     "@napi-rs/cli": "^3.5.1",
     "@types/better-sqlite3": "^7.6.13",
     "@types/color": "^4.2.0",
