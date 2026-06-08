@@ -348,11 +348,25 @@ export function initializeIpcHandlers(appState: AppState): void {
   });
 
   safeIpcHandle("get-user-profile", async () => {
-    return DatabaseManager.getInstance().getUserProfile();
+    try {
+      return DatabaseManager.getInstance().getUserProfile();
+    } catch (err: any) {
+      console.error('[IPC] get-user-profile failed (database may not be initialized):', err.message);
+      return null;
+    }
   });
 
   safeIpcHandle("save-user-profile", async (event, profile: any) => {
-    const result = DatabaseManager.getInstance().saveUserProfile(profile);
+    let result = false;
+    try {
+      result = DatabaseManager.getInstance().saveUserProfile(profile);
+    } catch (err: any) {
+      console.error('[IPC] save-user-profile database write failed:', err.message);
+      // If database is completely broken (native module mismatch), still allow
+      // the user to proceed through setup. The profile won't persist until
+      // the native module is rebuilt, but the app won't be hard-locked.
+      result = true;
+    }
     
     // Trigger background sync with cloud — wrapped in try-catch so it never
     // crashes the profile-save handler even if LicenseManager fails to load.
